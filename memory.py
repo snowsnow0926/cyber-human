@@ -53,6 +53,18 @@ class Memory:
             )
         """)
         
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS daily_plan (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL UNIQUE,
+                plan TEXT,
+                mood TEXT,
+                status TEXT DEFAULT "pending",
+                executed_at TEXT,
+                human_note TEXT
+            )
+        """)
+        
         self.conn.commit()
 
     def remember_browse(self, source: str, title: str, summary: str, url: str = ""):

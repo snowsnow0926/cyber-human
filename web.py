@@ -208,7 +208,30 @@ HTML_TEMPLATE = """
     </div>
 
     {% else %}
-    <!-- browse tab (default) -->
+    <!-- browse tab + daily plan (default) -->
+    {% if daily_plan %}
+    <div class="card">
+        <h2>📋 今天的计划</h2>
+        <div class="mood">{{ daily_plan.mood }}</div>
+        <div style="font-size:13px;color:#888;margin:8px 0">
+            🎯 {{ daily_plan.focus }}
+        </div>
+        {% for item in daily_plan.plans %}
+        <div class="entry" style="font-size:13px">
+            <span style="color:#5a9eff">{{ item.icon }}</span>
+            {{ item.reason }}
+        </div>
+        {% endfor %}
+        {% if daily_plan.human_note %}
+        <div style="margin-top:8px;padding:8px;background:#2a2a4e;border-radius:6px;font-size:12px;color:#ffd700">
+            💬 人类留言: {{ daily_plan.human_note }}
+        </div>
+        {% endif %}
+        <div style="margin-top:8px;font-size:11px;color:#555">
+            状态: {{ "✅ 已完成" if daily_plan.done else "⏳ 计划中" }}
+        </div>
+    </div>
+    {% endif %}
     <div class="card">
         <h2>🌐 今天浏览的内容</h2>
         {% for b in browse %}
@@ -299,9 +322,35 @@ def index():
         **get_token_stats(mem)
     }
     
-    mem.close()
-    
+    # 今日计划
+    import json
     today = __import__('datetime').date.today().isoformat()
+    daily_plan = None
+    c = mem.conn.execute("SELECT plan, mood, status, human_note FROM daily_plan WHERE date = ?", (today,))
+    row = c.fetchone()
+    if row and row[0]:
+        try:
+            plan_data = json.loads(row[0])
+            plan_icons = {"bilibili": "🎬", "baidu": "🔍", "douyin": "🎵", "zhihu": "💡"}
+            plans = []
+            for item in plan_data.get("plan", []):
+                p = item.get("platform", "")
+                plans.append({
+                    "platform": p,
+                    "reason": item.get("reason", "随便看看"),
+                    "icon": plan_icons.get(p, "🌐")
+                })
+            daily_plan = {
+                "mood": row[1] or plan_data.get("mood", ""),
+                "focus": plan_data.get("focus", ""),
+                "plans": plans,
+                "human_note": row[3],
+                "done": row[2] == "done"
+            }
+        except:
+            daily_plan = None
+    
+    mem.close()
     
     return render_template_string(HTML_TEMPLATE,
         tab=tab,
@@ -311,6 +360,7 @@ def index():
         diaries=diaries,
         stats=stats,
         notifications=notifications,
+        daily_plan=daily_plan,
         time_now=today,
         birthday="2026-05-15"
     )
