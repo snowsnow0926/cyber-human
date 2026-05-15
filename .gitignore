@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 cyber_memory.db
 daily.log
+backup/
