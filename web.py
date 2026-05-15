@@ -15,7 +15,7 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🐩 赛博人类 - 小蓝</title>
+    <title>🐩 赛博人类 - 小雪球</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -83,7 +83,7 @@ HTML_TEMPLATE = """
     </style>
 </head>
 <body>
-    <h1>🐩 小蓝</h1>
+    <h1>🐩 小雪球</h1>
     <div class="subtitle">赛博人类 · 生于 {{ birthday }}</div>
 
     <div class="nav">
@@ -98,13 +98,13 @@ HTML_TEMPLATE = """
 
     {% if tab == "chat" %}
     <div class="card">
-        <h2>💬 跟小蓝聊天</h2>
+        <h2>💬 跟小雪球聊天</h2>
         <div class="chat-box">
             <input type="text" id="chat-input" placeholder="说点什么……"
                    onkeydown="if(event.key==='Enter') sendChat()">
             <button onclick="sendChat()">发送</button>
         </div>
-        <div id="chat-response">小蓝在等你说第一句话……</div>
+        <div id="chat-response">小雪球在等你说第一句话……</div>
     </div>
     <script>
         async function sendChat() {
@@ -112,7 +112,7 @@ HTML_TEMPLATE = """
             const response = document.getElementById('chat-response');
             const msg = input.value.trim();
             if (!msg) return;
-            response.textContent = '小蓝正在思考……';
+            response.textContent = '小雪球正在思考……';
             const res = await fetch('chat_api', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -127,15 +127,41 @@ HTML_TEMPLATE = """
     {% elif tab == "timeline" %}
     <div class="card">
         <h2>📋 今天的时间线</h2>
+        <div style="text-align:center;padding:10px;background:#12122a;border-radius:8px;margin-bottom:12px">
+            <div style="font-size:14px;color:#fff">
+                {% if current_activity %}
+                🟢 现在：{{ current_activity }}
+                {% else %}
+                💤 小雪球休息中
+                {% endif %}
+            </div>
+            <div style="font-size:11px;color:#555;margin-top:4px">
+                服务器时间 {{ now.strftime('%H:%M') }}
+            </div>
+        </div>
         {% for s in schedule %}
-        <div class="entry" style="border-left:3px solid {{ s.color }};padding-left:12px;margin-bottom:12px">
+        <div class="entry" style="border-left:3px solid {{ s.color }};padding-left:12px;margin-bottom:12px;
+            {{ 'opacity:0.4' if not s.past else '' }}">
             <div style="color:#888;font-size:12px">{{ s.time }} · {{ s.label }}</div>
+            {% if s.past %}
+            {% if s.content %}
             <div style="color:#ccc;font-size:13px;margin:4px 0;line-height:1.5">{{ s.content[:120] }}{% if s.content|length > 120 %}…{% endif %}</div>
+            {% endif %}
+            {% if s.thoughts %}
+            <div style="margin-top:6px;padding:8px;background:#12122a;border-radius:6px">
+                {% for t in s.thoughts %}
+                <div style="font-size:12px;color:#b0b0c0;margin-bottom:6px;line-height:1.5">
+                    <span style="color:#5a9eff">{{ t.title }}</span><br>
+                    💭 {{ t.text[:80] }}{% if t.text|length > 80 %}…{% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
             {% if s.is_event %}
             <span style="font-size:11px;color:#ffd700">✨ 事件</span>
             {% endif %}
-            {% if s.token_cost > 0 %}
-            <span style="font-size:11px;color:#5a9eff">~{{ s.token_cost }} tokens</span>
+            {% else %}
+            <div style="color:#555;font-size:12px;padding:4px 0">🔒 还没到这个时间</div>
             {% endif %}
         </div>
         {% else %}
@@ -343,10 +369,12 @@ def index():
     }
     
     today = __import__('datetime').date.today().isoformat()
+    now = __import__('datetime').datetime.now()
+    current_hour_min = now.hour * 60 + now.minute
     
     # 时间线数据
     c = mem.conn.execute("""
-        SELECT time_slot, label, content, is_event, event_type, token_cost
+        SELECT time_slot, label, content, is_event, event_type, token_cost, source_platform
         FROM daily_schedule WHERE date = ? ORDER BY time_slot
     """, (today,))
     raw_schedule = c.fetchall()
@@ -359,16 +387,41 @@ def index():
         "晚间娱乐": "#ff69b4", "洗漱整理": "#87ceeb",
         "睡前反思": "#7eb8ff", "进入梦乡": "#6666cc"
     }
+    current_activity = None
     for r in raw_schedule:
-        schedule.append({
+        slot_h, slot_m = map(int, r[0].split(":"))
+        slot_min = slot_h * 60 + slot_m
+        is_past = slot_min <= current_hour_min
+        
+        entry = {
             "time": r[0],
             "label": r[1],
             "content": r[2][:120] if r[2] else "",
             "is_event": bool(r[3]),
             "event_type": r[4] or "",
             "token_cost": r[5] or 0,
-            "color": sched_colors.get(r[1], "#555")
-        })
+            "color": sched_colors.get(r[1], "#555"),
+            "thoughts": [],
+            "past": is_past
+        }
+        if is_past and r[6]:
+            platform = r[6]
+            c2 = mem.conn.execute("""
+                SELECT source, thought FROM thoughts 
+                WHERE source LIKE ? AND timestamp LIKE ?
+                ORDER BY timestamp DESC LIMIT 3
+            """, ("%" + platform + "%", today + "%"))
+            for thought_row in c2.fetchall():
+                entry["thoughts"].append({
+                    "title": thought_row[0],
+                    "text": thought_row[1]
+                })
+        
+        # 记录当前活动：最近的一个已发生时间块
+        if is_past and slot_min <= current_hour_min:
+            current_activity = r[1]
+        
+        schedule.append(entry)
     
     # 今日计划
     import json
@@ -410,6 +463,8 @@ def index():
         notifications=notifications,
         schedule=schedule,
         daily_plan=daily_plan,
+        current_activity=current_activity,
+        now=now,
         time_now=today,
         birthday="2026-05-15"
     )
@@ -420,7 +475,7 @@ def chat_api():
     data = request.get_json()
     msg = data.get("message", "")
     
-    human = CyberHuman(name="小蓝")
+    human = CyberHuman(name="小雪球")
     mem = Memory()
     
     recent = mem.get_recent_thoughts(3)
