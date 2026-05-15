@@ -126,7 +126,7 @@ class Browser:
             resp = requests.get(
                 "https://www.douyin.com/aweme/v1/web/hot/search/list/",
                 params={"device_platform": "webapp", "aid": "6383"},
-                headers={**self.HEADERS, "Accept": "application/json"},
+                headers={**self.HEADERS, "Referer": "https://www.douyin.com/", "Accept": "application/json"},
                 timeout=10
             )
             data = resp.json()
