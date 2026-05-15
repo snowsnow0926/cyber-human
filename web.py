@@ -272,6 +272,28 @@ HTML_TEMPLATE = """
             </div>
         </div>
     </div>
+    
+    <div class="card">
+        <h2>🧠 记忆系统（方向B）</h2>
+        <div class="stat-grid">
+            <div class="stat-item">
+                <div class="stat-num">{{ memory_stats.tiers.短期 }}</div>
+                <div class="stat-label">短期记忆</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-num">{{ memory_stats.tiers.中期 }}</div>
+                <div class="stat-label">中期记忆</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-num">{{ memory_stats.tiers.长期 }}</div>
+                <div class="stat-label">长期记忆</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-num">{{ memory_stats.nights_consolidated }}</div>
+                <div class="stat-label">夜间巩固</div>
+            </div>
+        </div>
+    </div>
 
     {% elif tab == "thoughts" %}
     <div class="card">
@@ -280,7 +302,14 @@ HTML_TEMPLATE = """
         <div class="entry">
             <div class="source">{{ t[2] }}</div>
             <div class="thought">{{ t[3] }}</div>
-            <div class="time">{{ t[1][:16] }}</div>
+            <div class="time" style="font-size:11px">{{ t[1][:16] }}
+                {% if t|length > 5 and t[6] %}
+                · {% if t[6] == 'long' %}🏛️{% elif t[6] == 'mid' %}📖{% else %}📄{% endif %} {{ t[6] }}
+                {% endif %}
+                {% if t|length > 7 and t[7] %}
+                · {% if t[7] == '好奇' %}🤔{% elif t[7] == '开心' %}😊{% elif t[7] == '困惑' %}😕{% elif t[7] == '害怕' %}😨{% elif t[7] == '伤心' %}😢{% elif t[7] == '生气' %}😤{% elif t[7] == '惊讶' %}😲{% else %}😐{% endif %} {{ t[7] }}
+                {% endif %}
+            </div>
         </div>
         {% else %}
         <div class="empty">还没有想法</div>
@@ -404,6 +433,12 @@ def index():
         **get_token_stats(mem)
     }
     
+    # 记忆系统统计
+    from memory_core import MemoryCore
+    mc = MemoryCore(mem)
+    memory_stats = mc.get_memory_summary()
+    memory_stats["nights_consolidated"] = mem.conn.execute("SELECT COUNT(*) FROM memory_consolidation").fetchone()[0]
+    
     today = __import__('datetime').date.today().isoformat()
     now = __import__('datetime').datetime.now()
     current_hour_min = now.hour * 60 + now.minute
@@ -513,6 +548,7 @@ def index():
         thoughts_all=thoughts_all,
         diaries=diaries,
         stats=stats,
+        memory_stats=memory_stats,
         notifications=notifications,
         all_slots=all_slots,
         past_events=past_events,

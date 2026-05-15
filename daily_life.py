@@ -5,6 +5,7 @@
 import json
 import random
 from datetime import datetime, date
+from memory_core import MemoryCore
 
 
 class DailyLife:
@@ -48,6 +49,7 @@ class DailyLife:
         self.today = date.today().isoformat()
         self.events = []
         self.total_tokens = 0
+        self.memory_core = MemoryCore(memory)
     
     def run_full_day(self):
         print("\n 的一天开始了......")
@@ -180,6 +182,7 @@ class DailyLife:
                 source="%s - %s" % (label_name, title[:30]),
                 mood=summary[:100] if summary else title[:60]
             )
+            self.memory_core.tag_thought(thought, importance)
             # 存储重要程度（方向B - 记忆系统）
             self.memory.conn.execute(
                 "UPDATE thoughts SET importance = ? WHERE id = (SELECT MAX(id) FROM thoughts)",
