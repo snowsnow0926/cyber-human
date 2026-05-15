@@ -4,7 +4,7 @@
 
 import json
 import random
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from memory_core import MemoryCore
 from character import should_be_interested, get_interest_weight
 from knowledge import KnowledgeSystem
@@ -17,6 +17,11 @@ try:
     HAS_PLAYWRIGHT = True
 except:
     HAS_PLAYWRIGHT = False
+
+
+def _ts(msg):
+    """带时间戳的日志输出"""
+    return "[DL %s] %s" % (datetime.now().strftime("%H:%M:%S"), msg)
 
 
 class DailyLife:
@@ -53,6 +58,12 @@ class DailyLife:
         "洗漱整理": "shower", "睡前反思": "star", "进入梦乡": "sleep"
     }
 
+    # 情绪 → 表情映射
+    MOOD_EMOJIS = {
+        "好奇": "🤔", "开心": "😊", "困惑": "😕", "害怕": "😨",
+        "伤心": "😢", "生气": "😤", "惊讶": "😲", "平静": "😐",
+    }
+
     def __init__(self, human, memory, browser):
         self.human = human
         self.memory = memory
@@ -70,47 +81,144 @@ class DailyLife:
     def _record_tokens(self, tokens):
         if tokens <= 0:
             return
-        self.memory.conn.execute(
-            "INSERT INTO token_usage (timestamp, prompt_tokens, completion_tokens, total_tokens) VALUES (?, 0, 0, ?)",
-            (datetime.now().isoformat(), tokens)
-        )
-        self.memory.conn.commit()
+        try:
+            self.memory.conn.execute(
+                "INSERT INTO token_usage (timestamp, prompt_tokens, completion_tokens, total_tokens) VALUES (?, 0, 0, ?)",
+                (datetime.now().isoformat(), tokens)
+            )
+            self.memory.conn.commit()
+        except Exception as e:
+            print(_ts("记录token失败: " + str(e)))
     
     def _log(self, msg):
-        print("  [DL] " + msg)
+        print(_ts(msg))
     
+    def get_mood_emoji(self):
+        """获取小雪球当前的当前情绪表情"""
+        try:
+            recent = self.memory.get_recent_thoughts(1)
+            if recent:
+                mood = recent[0][4] if recent[0][4] else ""
+                if mood in self.MOOD_EMOJIS:
+                    return self.MOOD_EMOJIS[mood]
+                # 如果mood是空的，尝试从thought text检测
+                if recent[0][3]:
+                    return self.MOOD_EMOJIS.get(self.memory_core._detect_emotion(recent[0][3]), "😐")
+            return "😐"
+        except:
+            return "😐"
 
     def _load_continuations(self):
         """加载未完成的事件链"""
-        rows = self.memory.conn.execute(
-            "SELECT continuation FROM daily_schedule WHERE date = ? AND continuation != '' ORDER BY time_slot DESC LIMIT 3",
-            (self.today,)
-        ).fetchall()
-        return [r[0] for r in rows if r[0]]
+        try:
+            rows = self.memory.conn.execute(
+                "SELECT continuation FROM daily_schedule WHERE date = ? AND continuation != '' ORDER BY time_slot DESC LIMIT 3",
+                (self.today,)
+            ).fetchall()
+            return [r[0] for r in rows if r[0]]
+        except:
+            return []
     
     def _save_continuation(self, text: str):
         """保存事件链延续到明天"""
-        self.memory.conn.execute(
-            "UPDATE daily_schedule SET continuation = ? WHERE date = ? AND time_slot = (SELECT MAX(time_slot) FROM daily_schedule WHERE date = ?)",
-            (text, self.today, self.today)
-        )
-        self.memory.conn.commit()
+        try:
+            self.memory.conn.execute(
+                "UPDATE daily_schedule SET continuation = ? WHERE date = ? AND time_slot = (SELECT MAX(time_slot) FROM daily_schedule WHERE date = ?)",
+                (text, self.today, self.today)
+            )
+            self.memory.conn.commit()
+        except Exception as e:
+            print(_ts("保存continuation失败: " + str(e)))
 
     def run_full_day(self):
-        print("\n 的一天开始了......")
+        """
+        实时时间线：只生成当前时间附近（±1小时）的时间块。
+        其他时间块标记为 "pending"。
+        """
+        print("\n🐩 的一天开始了......")
         print("=" * 40)
         
-        for block in self.TIME_BLOCKS:
-            result = self.execute_block(block)
-            if result:
-                self.events.append(result)
+        now = datetime.now()
+        current_minutes = now.hour * 60 + now.minute
         
-        self._write_diary()
+        for block in self.TIME_BLOCKS:
+            block_h, block_m = map(int, block["time"].split(":"))
+            block_minutes = block_h * 60 + block_m
+            
+            # 计算时间差
+            diff = abs(block_minutes - current_minutes)
+            
+            if diff <= 60:
+                # 当前时间 ±1小时 → 执行
+                result = self.execute_block(block)
+                if result:
+                    self.events.append(result)
+            elif block_minutes < current_minutes:
+                # 已经过去的时间 → 检查是否已生成，否则标记pending
+                already_done = self._is_slot_done(block["time"])
+                if not already_done:
+                    self._mark_pending(block["time"], block["label"])
+                else:
+                    # 加载已有数据
+                    self._load_existing_event(block)
+            else:
+                # 未来的时间块 → 标记pending
+                self._mark_pending(block["time"], block["label"])
+        
+        # 如果今天还没有反思/日记，并且已经过了23点，写日记
+        if current_minutes >= 23 * 60:
+            self._write_diary()
         
         print("\n" + "=" * 40)
-        print(" 睡着了......")
-        print(" 今日共 %d 个时间块, 消耗 ~%d tokens" % (len(self.events), self.total_tokens))
+        print("🐩 今天执行了 %d 个时间块, 消耗 ~%d tokens" % (len(self.events), self.total_tokens))
+        print(_ts("已完成区块: %d/%d" % (len(self.events), len(self.TIME_BLOCKS))))
         return self.events
+    
+    def _is_slot_done(self, time_slot):
+        """检查时间块是否已经生成"""
+        try:
+            row = self.memory.conn.execute(
+                "SELECT content FROM daily_schedule WHERE date = ? AND time_slot = ?",
+                (self.today, time_slot)
+            ).fetchone()
+            return row is not None and row[0] != "pending"
+        except:
+            return False
+    
+    def _mark_pending(self, time_slot, label):
+        """标记时间块为待定"""
+        try:
+            existing = self.memory.conn.execute(
+                "SELECT id FROM daily_schedule WHERE date = ? AND time_slot = ?",
+                (self.today, time_slot)
+            ).fetchone()
+            if not existing:
+                self.memory.conn.execute(
+                    "INSERT INTO daily_schedule (date, time_slot, activity_type, label, content, is_event, created_at) VALUES (?, ?, 'pending', ?, 'pending', 0, ?)",
+                    (self.today, time_slot, label, datetime.now().isoformat())
+                )
+                self.memory.conn.commit()
+        except Exception as e:
+            print(_ts("标记pending失败: " + str(e)))
+    
+    def _load_existing_event(self, block):
+        """加载已存在的事件数据"""
+        try:
+            rows = self.memory.conn.execute(
+                "SELECT content, is_event, event_type, token_cost, source_platform FROM daily_schedule WHERE date = ? AND time_slot = ? AND content != 'pending'",
+                (self.today, block["time"])
+            ).fetchall()
+            for r in rows:
+                self.events.append({
+                    "time": block["time"],
+                    "label": block["label"],
+                    "content": r[0][:200] if r[0] else "",
+                    "is_event": bool(r[1]),
+                    "event_type": r[2] or "", 
+                    "source_platform": r[4] or ""
+                })
+        except:
+            pass
     
     def execute_block(self, block):
         time_slot = block["time"]
@@ -121,7 +229,6 @@ class DailyLife:
         
         if block_type == "sleep":
             self._save_slot(time_slot, "sleep", label, "zzz......")
-            print("  zzz......")
             return {"time": time_slot, "label": label, "content": "zzz...", "type": "sleep"}
         
         if block_type == "browse":
@@ -139,21 +246,25 @@ class DailyLife:
         label = block["label"]
         time_slot = block["time"]
         
-        roll = random.random()
-        
-        if roll < 0.70:
-            templates = self.ROUTINE_TEMPLATES.get(label, ["没什么特别的"])
-            content = random.choice(templates)
-            self._save_slot(time_slot, "routine", label, content, is_event=0, token_cost=0)
-            print("  " + content)
-            return {"time": time_slot, "label": label, "content": content, "type": "routine", "is_event": False}
-        
-        else:
-            content, cost = self._generate_mini_event(label)
-            self._save_slot(time_slot, "routine", label, content, is_event=1, event_type="small", token_cost=cost)
-            print("  [事件] " + content[:80] + "...")
-            self.total_tokens += cost
-            return {"time": time_slot, "label": label, "content": content, "type": "event", "is_event": True}
+        try:
+            roll = random.random()
+            
+            if roll < 0.70:
+                templates = self.ROUTINE_TEMPLATES.get(label, ["没什么特别的"])
+                content = random.choice(templates)
+                self._save_slot(time_slot, "routine", label, content, is_event=0, token_cost=0)
+                print("  " + content)
+                return {"time": time_slot, "label": label, "content": content, "type": "routine", "is_event": False}
+            
+            else:
+                content, cost = self._generate_mini_event(label)
+                self._save_slot(time_slot, "routine", label, content, is_event=1, event_type="small", token_cost=cost)
+                print("  [事件] " + content[:80] + "...")
+                self.total_tokens += cost
+                return {"time": time_slot, "label": label, "content": content, "type": "event", "is_event": True}
+        except Exception as e:
+            print(_ts("routine块失败: " + str(e)))
+            return None
     
     def _generate_mini_event(self, label):
         prompt = "现在是%s的时间。发生了一件日常生活里的小事，用第一人称简单说说发生了什么，你是什么感觉。（2-3句话）" % label
@@ -171,7 +282,8 @@ class DailyLife:
             cost = usage.total_tokens if usage else 100
             self._record_tokens(cost)
             return content, cost
-        except:
+        except Exception as e:
+            print(_ts("mini事件生成失败: " + str(e)))
             return "在%s的时候遇到了一点小事......" % label, 50
     
     def _fetch_bilibili_enhanced(self, limit=3):
@@ -190,177 +302,130 @@ class DailyLife:
         self._log("B站回退: 使用API")
         return self.browser.get_bilibili_hot(limit=limit)
     
-    def _fetch_weibo(self, limit=3):
-        """微博热搜（优先Playwright，失败用API）"""
-        try:
-            from browser_bot import BrowserBot as BB
-            with BB(headless=True) as bot:
-                data = bot.get_weibo_hot(limit=limit)
-                if data and len(data) >= limit//2:
-                    return data
-        except:
-            pass
-        # 用requests直接调（其实浏览器版也是requests）
-        return self.browser.get_baidu_hot(limit=limit) if False else []
-    
-    def _fetch_douban(self, limit=3):
-        """豆瓣电影排行榜（Playwright）"""
-        if self._playwright_available:
-            try:
-                with BrowserBot(headless=True) as bot:
-                    data = bot.get_douban_movie_hot(limit=limit)
-                    if data:
-                        return data
-            except Exception as e:
-                self._log("豆瓣失败: " + str(e))
-        return []
-    
-    def _fetch_netease(self, limit=3):
-        """网易新闻（Playwright）"""
-        if self._playwright_available:
-            try:
-                with BrowserBot(headless=True) as bot:
-                    data = bot.get_netease_hot(limit=limit)
-                    if data:
-                        return data
-            except Exception as e:
-                self._log("网易失败: " + str(e))
-        return []
-    
     def _do_browse_block(self, block):
         label = block["label"]
         time_slot = block["time"]
         
-        hour = int(time_slot.split(":")[0])
-        
-        # 所有数据源（带权重，小雪球更可能看她感兴趣的）
-        all_sources = [
-            ("bilibili", "B站热门", 3),      # B站有美食区，感兴趣
-            ("baidu", "百度热搜", 2),        # 百度热搜偏社会，一般
-            ("douyin", "抖音热搜", 3),       # 抖音有美食生活，感兴趣
-            ("zhihu", "知乎热榜", 2),        # 知乎偏知识，不一定感兴趣
-            ("weibo", "微博热搜", 2),        # 微博有娱乐八卦，偶尔看
-            ("douban", "豆瓣电影", 2),       # 豆瓣电影，想看电影时看
-            ("netease", "网易新闻", 1),      # 新闻，不太感兴趣
-            ("ithome", "IT之家", 1),         # 科技，不太感兴趣
-            ("people", "人民网", 1),         # 时政，不感兴趣但跑数据
-        ]
-        
-        # 根据时间段调整概率
-        if hour < 12:
-            # 早上：B站美食区 + 微博看看新鲜事
-            weights = [3, 1, 1, 1, 2, 1, 1, 1, 1]
-        elif hour < 17:
-            # 下午：抖音 + 知乎 + 豆瓣
-            weights = [1, 1, 3, 2, 1, 2, 1, 1, 1]
-        else:
-            # 晚上：B站 + 抖音 + 豆瓣电影
-            weights = [3, 1, 2, 1, 1, 3, 1, 1, 1]
-        
-        # 加权随机选择
-        total_w = sum(weights)
-        r = random.randint(1, total_w)
-        cumulative = 0
-        chosen = all_sources[0]
-        for i, w in enumerate(weights):
-            cumulative += w
-            if r <= cumulative:
-                chosen = all_sources[i]
-                break
-        
-        platform, label_name = chosen[0], chosen[1]
-        
-        fetchers = {
-            "bilibili": lambda: self._fetch_bilibili_enhanced(limit=5),
-            "baidu": lambda: self.browser.get_baidu_hot(limit=5),
-            "douyin": lambda: self.browser.get_douyin_hot(limit=5),
-            "zhihu": lambda: self.browser.get_zhihu_hot(limit=5),
-            "weibo": lambda: self._fetch_weibo(limit=5),
-            "douban": lambda: self._fetch_douban(limit=5),
-            "netease": lambda: self._fetch_netease(limit=5),
-            "ithome": lambda: self.browser.get_ithome_hot(limit=5),
-            "people": lambda: self.browser.get_people_hot(limit=5),
-        }
-        
-        fetcher = fetchers.get(platform)
-        if not fetcher:
-            return None
-        
-        posts = fetcher()
-        results = []
-        total_cost = 0
-        
-        # 按小雪球的兴趣过滤
-        posts = [p for p in posts if should_be_interested(p.get("title", ""), p.get("summary", ""))]
-        if not posts:
-            self._log("小雪球对此不感兴趣，跳过")
-            return None
-        
-        # 按兴趣排序：感兴趣的在前面
-        posts.sort(key=lambda p: get_interest_weight(p.get("title", "")), reverse=True)
-        
-        for post in posts:
-            title = post.get("title", "")
-            summary = post.get("summary", "")
-            url = post.get("url", "")
-            stat = post.get("stat", "")
+        try:
+            hour = int(time_slot.split(":")[0])
             
-            if not title or "失败" in title or "暂无" in title:
-                continue
+            # 所有数据源（带权重）
+            all_sources = [
+                ("bilibili", "B站热门", 3),
+                ("baidu", "百度热搜", 2),
+                ("douyin", "抖音热搜", 3),
+                ("zhihu", "知乎热榜", 2),
+                ("xiaohongshu", "小红书", 2),
+            ]
             
-            self.memory.remember_browse(source=label_name, title=title, summary=summary, url=url)
+            # 根据时间段调整概率
+            if hour < 12:
+                weights = [3, 1, 1, 1, 1]
+            elif hour < 17:
+                weights = [1, 1, 3, 2, 2]
+            else:
+                weights = [3, 1, 2, 1, 2]
             
-            if random.random() < 0.35:
-                continue
+            # 加权随机选择
+            total_w = sum(weights)
+            r = random.randint(1, total_w)
+            cumulative = 0
+            chosen = all_sources[0]
+            for i, w in enumerate(weights):
+                cumulative += w
+                if r <= cumulative:
+                    chosen = all_sources[i]
+                    break
             
-            content = "[%s] %s\n%s" % (label_name, title, summary)
-            if stat:
-                content += "\n" + stat
+            platform, label_name = chosen[0], chosen[1]
             
-            thought, importance = self.human.think_about(content)
+            fetchers = {
+                "bilibili": lambda: self._fetch_bilibili_enhanced(limit=5),
+                "baidu": lambda: self.browser.get_baidu_hot(limit=5),
+                "douyin": lambda: self.browser.get_douyin_hot(limit=5),
+                "zhihu": lambda: self.browser.get_zhihu_hot(limit=5),
+                "xiaohongshu": lambda: self.browser.get_xiaohongshu_hot(limit=5),
+            }
             
-            self.memory.remember_thought(
-                thought=thought,
-                source="%s - %s" % (label_name, title[:30]),
-                mood=summary[:100] if summary else title[:60]
-            )
-            self.memory_core.tag_thought(thought, importance)
-            # 存储重要程度（方向B - 记忆系统）
-            self.memory.conn.execute(
-                "UPDATE thoughts SET importance = ? WHERE id = (SELECT MAX(id) FROM thoughts)",
-                (importance,)
-            )
-            # 知识提取（方向三 - 学习系统）
-            content_for_knowledge = "[%s] %s\n%s" % (label_name, title, summary)
-            if stat:
-                content_for_knowledge += "\n" + stat
-            k = self.knowledge.extract_from_content(content_for_knowledge, label_name, thought)
-            if k["has_knowledge"]:
-                self.knowledge.save_knowledge(
-                    concept=k["concept"],
-                    explanation=k["explanation"],
-                    category=k["category"],
-                    source=label_name + " - " + title[:30]
+            fetcher = fetchers.get(platform)
+            if not fetcher:
+                return None
+            
+            posts = fetcher()
+            results = []
+            total_cost = 0
+            
+            posts = [p for p in posts if should_be_interested(p.get("title", ""), p.get("summary", ""))]
+            if not posts:
+                self._log("小雪球对此不感兴趣，跳过")
+                return None
+            
+            posts.sort(key=lambda p: get_interest_weight(p.get("title", "")), reverse=True)
+            
+            for post in posts:
+                title = post.get("title", "")
+                summary = post.get("summary", "")
+                url = post.get("url", "")
+                stat = post.get("stat", "")
+                
+                if not title or "失败" in title or "暂无" in title:
+                    continue
+                
+                self.memory.remember_browse(source=label_name, title=title, summary=summary, url=url)
+                
+                if random.random() < 0.35:
+                    continue
+                
+                content = "[%s] %s\n%s" % (label_name, title, summary)
+                if stat:
+                    content += "\n" + stat
+                
+                thought, importance = self.human.think_about(content)
+                
+                self.memory.remember_thought(
+                    thought=thought,
+                    source="%s - %s" % (label_name, title[:30]),
+                    mood=summary[:100] if summary else title[:60]
                 )
-                self._log("学到新知识: " + k["category"] + " - " + k["concept"][:40])
-            self.memory.conn.commit()
+                self.memory_core.tag_thought(thought, importance)
+                self.memory.conn.execute(
+                    "UPDATE thoughts SET importance = ? WHERE id = (SELECT MAX(id) FROM thoughts)",
+                    (importance,)
+                )
+                content_for_knowledge = "[%s] %s\n%s" % (label_name, title, summary)
+                if stat:
+                    content_for_knowledge += "\n" + stat
+                
+                k = self.knowledge.extract_from_content(content_for_knowledge, label_name, thought)
+                if k["has_knowledge"]:
+                    self.knowledge.save_knowledge(
+                        concept=k["concept"],
+                        explanation=k["explanation"],
+                        category=k["category"],
+                        source=label_name + " - " + title[:30]
+                    )
+                    self._log("学到新知识: " + k["category"] + " - " + k["concept"][:40])
+                self.memory.conn.commit()
+                
+                total_cost += 100
+                results.append({"title": title, "thought": thought[:100]})
             
-            total_cost += 100
-            results.append({"title": title, "thought": thought[:100]})
-        
-        summary_text = "在%s看了%d条内容" % (label_name, len(results))
-        if results:
-            first_title = results[0]["title"][:30]
-            summary_text += "，最感兴趣的是【%s】" % first_title
-        
-        self._save_slot(time_slot, "browse", label, summary_text, token_cost=total_cost, source_platform=label_name)
-        self.total_tokens += total_cost
-        
-        print("  %s: %d 条" % (label_name, len(results)))
-        for r in results:
-            print("    %s" % r['title'][:40])
-        
-        return {"time": time_slot, "label": label, "content": summary_text, "type": "browse", "results": results}
+            summary_text = "在%s看了%d条内容" % (label_name, len(results))
+            if results:
+                first_title = results[0]["title"][:30]
+                summary_text += "，最感兴趣的是【%s】" % first_title
+            
+            self._save_slot(time_slot, "browse", label, summary_text, token_cost=total_cost, source_platform=label_name)
+            self.total_tokens += total_cost
+            
+            print("  %s: %d 条" % (label_name, len(results)))
+            for r in results:
+                print("    %s" % r['title'][:40])
+            
+            return {"time": time_slot, "label": label, "content": summary_text, "type": "browse", "results": results}
+        except Exception as e:
+            print(_ts("浏览块失败: " + str(e)))
+            return None
     
     def _do_reflect_block(self, block):
         time_slot = block["time"]
@@ -379,12 +444,14 @@ class DailyLife:
             usage = reply.usage
             cost = usage.total_tokens if usage else 200
             self.total_tokens += cost
+            self._record_tokens(cost)
             
             self._save_slot(time_slot, "reflect", block["label"], content, token_cost=cost)
             print("  " + content[:100] + "...")
             
             return {"time": time_slot, "label": block["label"], "content": content, "type": "reflect"}
-        except:
+        except Exception as e:
+            print(_ts("反思块失败: " + str(e)))
             return None
     
     def _write_diary(self):
@@ -398,13 +465,21 @@ class DailyLife:
                 diary_text = "今天发生了这些事：\n" + "\n".join(events_summary[:5])
                 self.memory.write_diary(summary=diary_text, mood="")
                 print("\n日记已写入")
-        except:
-            pass
+        except Exception as e:
+            print(_ts("写日记失败: " + str(e)))
     
     def _save_slot(self, time_slot, activity_type, label, content, is_event=0, event_type="", token_cost=0, source_platform=""):
-        now = datetime.now().isoformat()
-        self.memory.conn.execute(
-            "INSERT INTO daily_schedule (date, time_slot, activity_type, label, content, is_event, event_type, token_cost, source_platform, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (self.today, time_slot, activity_type, label, content, is_event, event_type, token_cost, source_platform, now)
-        )
-        self.memory.conn.commit()
+        try:
+            now = datetime.now().isoformat()
+            # 删除之前的 pending 记录
+            self.memory.conn.execute(
+                "DELETE FROM daily_schedule WHERE date = ? AND time_slot = ?",
+                (self.today, time_slot)
+            )
+            self.memory.conn.execute(
+                "INSERT INTO daily_schedule (date, time_slot, activity_type, label, content, is_event, event_type, token_cost, source_platform, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (self.today, time_slot, activity_type, label, content, is_event, event_type, token_cost, source_platform, now)
+            )
+            self.memory.conn.commit()
+        except Exception as e:
+            print(_ts("保存slot失败: " + str(e)))

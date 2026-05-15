@@ -52,6 +52,14 @@ def main():
         print(f"\n🌅 {human.name} 睡醒了……")
         life.run_full_day()
         
+        # AI 自训练（auto 模式自动执行）
+        if "--auto" in sys.argv:
+            try:
+                print("\n🧠 AI 自训练中...")
+                memory.train()
+            except Exception as e:
+                print("  [错误] AI自训练失败: " + str(e))
+        
         if "--auto" not in sys.argv:
             print(f"\n💬 可以跟我聊天了（输入 quit 退出）")
             history = []

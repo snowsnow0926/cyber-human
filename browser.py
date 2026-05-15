@@ -186,3 +186,30 @@ class Browser:
         except Exception as e:
             return [{"title": "人民网失败", "summary": str(e), "url": ""}]
 
+
+    def get_xiaohongshu_hot(self, limit: int = 5) -> list:
+        """获取小红书热搜（简化版，尝试抓取）
+        如果被ban则返回空列表。
+        """
+        try:
+            resp = requests.get(
+                "https://www.xiaohongshu.com/explore",
+                headers=self.HEADERS, timeout=10
+            )
+            if resp.status_code != 200:
+                return []
+            # 尝试从页面中提取热搜词
+            import re
+            titles = re.findall(r'<span[^>]*class="[^"]*title[^"]*"[^>]*>(.*?)</span>', resp.text)
+            results = []
+            for t in titles[:limit]:
+                clean_t = t.strip()[:80]
+                if clean_t:
+                    results.append({
+                        "title": clean_t,
+                        "summary": "",
+                        "url": f"https://www.xiaohongshu.com/search/result?keyword={clean_t}"
+                    })
+            return results if results else []
+        except Exception as e:
+            return []

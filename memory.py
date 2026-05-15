@@ -128,5 +128,24 @@ class Memory:
             rows = self.conn.execute("SELECT user_message, ai_reply, timestamp FROM dialogue_memory ORDER BY timestamp DESC LIMIT ?", (limit,))
         return [{"user": r[0], "ai": r[1], "time": r[2]} for r in rows.fetchall()]
     
+    def train(self):
+        """
+        AI 自训练：复习短期记忆，把重要的提升到中期。
+        在 auto 模式最后自动调用。
+        """
+        try:
+            from memory_core import MemoryCore as _MC
+            mc = _MC(self)
+            result = mc.consolidate()
+            print("  [AI自训练] 完成: %d条提升->中期, %d条提升->长期, %d条被遗忘" % (
+                result.get("promoted_mid", 0),
+                result.get("promoted_long", 0),
+                result.get("forgotten", 0)
+            ))
+            return result
+        except Exception as e:
+            print("  [AI自训练] 失败: " + str(e))
+            return {}
+    
     def close(self):
         self.conn.close()

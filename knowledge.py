@@ -69,8 +69,9 @@ class KnowledgeSystem:
         
         返回：{ "has_knowledge": bool, "concept": str, "explanation": str, "category": str }
         
-        注意：真正的知识提取应该由AI完成，
-        这里先用一个简单版本——从AI的想法中提取。
+        流程：
+        1. 先用关键词检测（快速判断）
+        2. 如果关键词没命中，用AI语义分析判断是否学到东西
         """
         result = {
             "has_knowledge": False,
@@ -81,7 +82,7 @@ class KnowledgeSystem:
         
         thought = ai_thought.lower()
         
-        # 判断AI是否有学到新东西
+        # === 第一层：关键词检测（原有逻辑，快速） ===
         learning_indicators = [
             "学到了", "第一次知道", "原来", "才发现",
             "了解了", "认识到了", "懂了", "知道了",
@@ -92,18 +93,19 @@ class KnowledgeSystem:
         ]
         
         has_learning = any(ind in thought for ind in learning_indicators)
+        
+        # === 第二层：AI语义分析（关键词没命中时使用） ===
+        if not has_learning:
+            has_learning = self._ai_check_learning(ai_thought, content)
+        
         if not has_learning:
             return result
         
         # 尝试从内容中提取知识点
-        # 取内容中比较有信息量的部分（第一段或标题）
         lines = content.split("\n")
         title = lines[0] if lines else ""
         
-        # 分类判断
         category = self._guess_category(title + " " + ai_thought)
-        
-        # 从AI想法中提取学习点
         concept = title[:60] if len(title) > 10 else ai_thought[:60]
         explanation = ai_thought[:200]
         
@@ -113,6 +115,61 @@ class KnowledgeSystem:
         result["category"] = category
         
         return result
+    
+    def _ai_check_learning(self, ai_thought: str, content: str) -> bool:
+        """
+        AI语义分析：通过分析AI回复的内容结构，
+        判断它是否在学习/发现新事物。
+        
+        不使用额外API调用，而是分析已有AI回复的语义特征：
+        - 包含解释性句式（"这让我想到"、"原来是这样"）
+        - 包含评价性内容（"很有意思"、"真不错"）
+        - 内容中包含具体知识点描述
+        - 对话式学习（"学到了"的各种变体）
+        """
+        thought_lower = ai_thought.lower()
+        content_lower = content.lower()
+        
+        # 语义分析模式 - 更深层的学习信号
+        semantic_patterns = [
+            # 解释和推理
+            "这是因为", "意思是", "所以", "也就是说",
+            "其实", "本质上", "指的是", "相当于",
+            # 发现和洞察
+            "让我想到", "联想到", "回想起来",
+            "突然发现", "意识到", "明白了",
+            # 知识与事实
+            "是", "就是", "叫做", "被称为",
+            "分为", "包括", "含有", "含有", "组成",
+            # 感受性学习
+            "好厉害", "真厉害", "太棒了", "好棒",
+            "有意思", "好有趣", "好好玩",
+            # 行动意向
+            "下次试试", "我也要", "想试试",
+            "收藏了", "记下来", "码住",
+        ]
+        
+        # 如果内容本身包含信息密度高的句子（非纯情绪表达）
+        info_density = 0
+        for sentence in ai_thought.split("。"):
+            sentence = sentence.strip()
+            if len(sentence) > 15:  # 长句子可能有信息量
+                info_density += 1
+            if "是" in sentence and len(sentence) > 20:  # 定义/判断句
+                info_density += 2
+        
+        # 匹配语义模式
+        matches = sum(1 for pat in semantic_patterns if pat in thought_lower)
+        
+        # 综合判断
+        if matches >= 2:
+            return True
+        if matches >= 1 and info_density >= 3:
+            return True
+        if info_density >= 5:
+            return True
+        
+        return False
     
     def _guess_category(self, text: str) -> str:
         """根据文本猜测知识分类"""
@@ -142,14 +199,12 @@ class KnowledgeSystem:
         conn = self.memory.conn
         now = datetime.now().isoformat()
         
-        # 检查是否已存在类似知识（避免重复）
         existing = conn.execute(
             "SELECT id, review_count FROM knowledge WHERE concept = ? AND forgotten = 0",
             (concept,)
         ).fetchone()
         
         if existing:
-            # 已存在：更新为新的理解
             conn.execute(
                 "UPDATE knowledge SET explanation = ?, review_count = review_count + 1, last_reviewed = ?, confidence = MIN(confidence + 1, 5) WHERE id = ?",
                 (explanation, now, existing[0])
@@ -166,16 +221,10 @@ class KnowledgeSystem:
     def review_random(self, limit=3) -> list:
         """
         随机挑选几个知识点来复习。
-        
-        优先选：
-        1. 很久没复习的
-        2. 理解程度低的
-        3. 从未复习过的
         """
         conn = self.memory.conn
         now = datetime.now().isoformat()
         
-        # 挑需要复习的：confidence < 3 或 超过3天没复习
         three_days_ago = (datetime.now() - timedelta(days=3)).isoformat()
         candidates = conn.execute("""
             SELECT id, concept, explanation, category, confidence, review_count, last_reviewed
@@ -192,13 +241,11 @@ class KnowledgeSystem:
         for row in candidates:
             kid, concept, explanation, category, conf, count, last = row
             
-            # 标记为已复习
             conn.execute(
                 "UPDATE knowledge SET review_count = review_count + 1, last_reviewed = ?, confidence = MIN(confidence + 1, 5) WHERE id = ?",
                 (now, kid)
             )
             
-            # 记录复习历史
             conn.execute(
                 "INSERT INTO knowledge_reviews (knowledge_id, review_date, understanding, confidence_before, confidence_after) VALUES (?, ?, ?, ?, ?)",
                 (kid, date.today().isoformat(), "复习加深", conf, min(conf + 1, 5))
@@ -223,7 +270,6 @@ class KnowledgeSystem:
         conn = self.memory.conn
         cutoff = (datetime.now() - timedelta(days=days)).isoformat()
         
-        # confidence <= 2 且超过14天没复习
         forgotten = conn.execute("""
             SELECT id, concept FROM knowledge
             WHERE forgotten = 0 AND confidence <= 2 AND last_reviewed < ?
@@ -241,12 +287,10 @@ class KnowledgeSystem:
         total = conn.execute("SELECT COUNT(*) FROM knowledge WHERE forgotten = 0").fetchone()[0]
         forgotten = conn.execute("SELECT COUNT(*) FROM knowledge WHERE forgotten = 1").fetchone()[0]
         
-        # 按分类统计
         categories = {}
         for row in conn.execute("SELECT category, COUNT(*) FROM knowledge WHERE forgotten = 0 GROUP BY category"):
             categories[row[0]] = row[1]
         
-        # 理解程度分布
         conf_dist = {}
         for i in range(1, 6):
             cnt = conn.execute("SELECT COUNT(*) FROM knowledge WHERE forgotten = 0 AND confidence = ?", (i,)).fetchone()[0]
@@ -270,4 +314,17 @@ class KnowledgeSystem:
             ORDER BY confidence DESC, last_reviewed DESC
             LIMIT ?
         """, (limit,)).fetchall()
+        return rows
+    
+    def search_knowledge(self, keyword: str, limit=20) -> list:
+        """搜索知识库"""
+        conn = self.memory.conn
+        like = f"%{keyword}%"
+        rows = conn.execute("""
+            SELECT id, timestamp, concept, explanation, category, source, confidence, review_count, last_reviewed
+            FROM knowledge
+            WHERE forgotten = 0 AND (concept LIKE ? OR explanation LIKE ? OR category LIKE ?)
+            ORDER BY confidence DESC, last_reviewed DESC
+            LIMIT ?
+        """, (like, like, like, limit)).fetchall()
         return rows
