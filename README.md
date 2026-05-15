@@ -63,3 +63,7 @@ cyber-human/
 - [ ] 情绪系统
 - [ ] Web 管理界面
 - [ ] 多个赛博人类同时管理
+
+## License
+
+MIT License - 完全开源，自由使用、修改、分发。
