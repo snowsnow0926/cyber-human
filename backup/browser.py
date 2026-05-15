@@ -21,20 +21,6 @@ class Browser:
                       "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     
-    
-    def _cached_get(self, key, ttl=300):
-        """从缓存取数据，5分钟内不重复请求"""
-        import time
-        if key in self.cache:
-            data, ts = self.cache[key]
-            if time.time() - ts < ttl:
-                return data
-        return None
-    
-    def _cache_set(self, key, data):
-        import time
-        self.cache[key] = (data, time.time())
-
     def get_bilibili_hot(self, limit: int = 5) -> list:
         """获取B站热门视频"""
         try:

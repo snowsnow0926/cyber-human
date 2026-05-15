@@ -195,7 +195,7 @@ HTML_TEMPLATE = """
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;padding:10px 14px;background:#1a1a2e;border-radius:12px;border:1px solid #2a2a4e">
         <a href="?tab=timeline&amp;date={{ prev_date }}" style="color:#888;text-decoration:none;font-size:20px">‹</a>
         <div style="text-align:center">
-            <div style="font-size:15px;color:#fff;font-weight:bold">{{ date_display if date_display is defined else time_now[:10] }}</div>
+            <div style="font-size:15px;color:#fff;font-weight:bold">{{ date_display }}</div>
             <form style="margin-top:6px;display:flex;gap:6px" action="." method="GET">
                 <input type="hidden" name="tab" value="timeline">
                 <input type="date" name="date" value="{{ view_date }}" style="background:#222;color:#fff;border:1px solid #444;border-radius:6px;padding:4px 8px;font-size:12px">
@@ -296,12 +296,7 @@ HTML_TEMPLATE = """
     </div>
 
     {% elif tab == "diary" %}
-        {% set current_date = namespace(d="") %}
         {% for d in diaries %}
-        {% if d.date != current_date.d %}
-        {% set current_date.d = d.date %}
-        <div style="margin:12px 0 6px;font-size:13px;color:#888;font-weight:bold">📅 {{ d.date }}</div>
-        {% endif %}
         <div class="card">
             <h2>📝 {{ d[0] }}</h2>
             <div class="mood">心情: {{ d[2] or '未记录' }}</div>
@@ -312,37 +307,37 @@ HTML_TEMPLATE = """
         {% endfor %}
 
     {% elif tab == "phone" %}
-    <div class="card" style="max-width:360px;margin:0 auto">
-        <div style="background:#000;border-radius:28px;padding:20px 16px;color:#fff;box-shadow:0 4px 20px rgba(0,0,0,0.6)">
-            <div style="display:flex;justify-content:space-between;margin-bottom:16px;font-size:11px">
-                <span>{{ time_now.split(' ')[1][:5] if ' ' in time_now else '' }}</span>
-                <span>📶 🔋 100%</span>
+    <div class="card" style="max-width:380px;margin:0 auto">
+        <h2 style="text-align:center">📱 小雪球的手机</h2>
+        <div style="background:#000;border-radius:20px;padding:16px 12px 24px;
+                    color:#fff;font-size:13px;margin-top:8px">
+            <div style="text-align:center;font-size:11px;color:#555;padding:4px 0 12px">
+                🔋 100% · 📶 5G · {{ time_now[:10] }}
             </div>
-            <div style="text-align:center;font-size:17px;font-weight:bold;margin-bottom:4px">{{ date_display if date_display is defined else time_now[:10] }}</div>
-            <div style="text-align:center;font-size:10px;color:#555;margin-bottom:20px">—— 通知 ——</div>
             {% for n in notifications %}
-            <div style="display:flex;gap:10px;margin-bottom:14px">
-                <div style="width:30px;height:30px;border-radius:50%;background:#2a2a4e;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">{{ n.app[:1] if n.app else '💬' }}</div>
-                <div style="flex:1;background:#1c1c1e;border-radius:14px;padding:10px 14px">
-                    <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-                        <span style="font-size:11px;color:#888">{{ n.app }}</span>
-                        <span style="font-size:10px;color:#555">{{ n.time[:5] if n.time else '' }}</span>
-                    </div>
-                    {% if n.url %}
-                    <a href="{{ n.url }}" target="_blank" style="color:#fff;text-decoration:none;font-size:13px;display:block">{{ n.title[:50] }} ↗</a>
-                    {% else %}
-                    <div style="font-size:13px;line-height:1.4">{{ n.title[:60] }}</div>
-                    {% endif %}
-                </div>
+            <div style="background:#1c1c1e;border-radius:12px;padding:12px;margin-bottom:8px;
+                        border-left:3px solid {{ n.color }}">
+                <div style="color:#888;font-size:11px">{{ n.app }}</div>
+                {% if n.url %}
+                <a href="{{ n.url }}" target="_blank" rel="noopener"
+                   style="color:#fff;margin:4px 0;font-size:13px;display:block;text-decoration:none"
+                   onmouseover="this.style.color='{{ n.color }}'"
+                   onmouseout="this.style.color='#fff'">
+                    {{ n.title }} ↗
+                </a>
+                {% else %}
+                <div style="color:#fff;margin:4px 0;font-size:13px">{{ n.title }}</div>
+                {% endif %}
+                <div style="color:#aaa;font-size:11px">{{ n.time }}</div>
             </div>
             {% else %}
-            <div style="text-align:center;padding:40px 0">
-                <div style="font-size:28px;margin-bottom:8px">📱</div>
-                <div style="color:#555;font-size:13px">暂无通知</div>
+            <div style="text-align:center;padding:40px 0;color:#555">
+                📱 小雪球的手机还没收到任何推送
             </div>
             {% endfor %}
         </div>
     </div>
+
     {% elif tab == "stats" %}
     <div class="card">
         <h2>📊 数据统计</h2>

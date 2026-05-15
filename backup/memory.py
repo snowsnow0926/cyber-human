@@ -110,23 +110,10 @@ class Memory:
 
     def _migrate(self):
         cursor = self.conn.cursor()
-        cursor.execute("CREATE TABLE IF NOT EXISTS daily_schedule (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, time_slot TEXT, activity_type TEXT, label TEXT, content TEXT, is_event INTEGER DEFAULT 0, event_type TEXT DEFAULT '', token_cost INTEGER DEFAULT 0, source_platform TEXT DEFAULT '', created_at TEXT DEFAULT '', continuation TEXT DEFAULT '')")
+        cursor.execute("CREATE TABLE IF NOT EXISTS daily_schedule (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, time_slot TEXT, activity_type TEXT, label TEXT, content TEXT, is_event INTEGER DEFAULT 0, event_type TEXT DEFAULT '', token_cost INTEGER DEFAULT 0, source_platform TEXT DEFAULT '', created_at TEXT DEFAULT '')")
         cursor.execute("CREATE TABLE IF NOT EXISTS memory_consolidation (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL UNIQUE, consolidated_at TEXT, total_before INTEGER DEFAULT 0, promoted_to_mid INTEGER DEFAULT 0, promoted_to_long INTEGER DEFAULT 0, forgotten INTEGER DEFAULT 0, summary TEXT)")
-        cursor.execute("CREATE TABLE IF NOT EXISTS dialogue_memory (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, user_message TEXT, ai_reply TEXT, context TEXT, timestamp TEXT)")
         cursor.execute("CREATE TABLE IF NOT EXISTS knowledge_reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, knowledge_id INTEGER, review_date TEXT, understanding TEXT, confidence_before INTEGER, confidence_after INTEGER)")
         self.conn.commit()
 
-    def remember_dialogue(self, user_id, user_message, ai_reply, context=""):
-        now = __import__('datetime').datetime.now().isoformat()
-        self.conn.execute("INSERT INTO dialogue_memory (user_id, user_message, ai_reply, context, timestamp) VALUES (?, ?, ?, ?, ?)", (user_id, user_message, ai_reply, context, now))
-        self.conn.commit()
-    
-    def get_recent_dialogues(self, user_id="", limit=5):
-        if user_id:
-            rows = self.conn.execute("SELECT user_message, ai_reply, timestamp FROM dialogue_memory WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?", (user_id, limit))
-        else:
-            rows = self.conn.execute("SELECT user_message, ai_reply, timestamp FROM dialogue_memory ORDER BY timestamp DESC LIMIT ?", (limit,))
-        return [{"user": r[0], "ai": r[1], "time": r[2]} for r in rows.fetchall()]
-    
     def close(self):
         self.conn.close()

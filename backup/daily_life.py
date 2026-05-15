@@ -8,8 +8,6 @@ from datetime import datetime, date
 from memory_core import MemoryCore
 from character import should_be_interested, get_interest_weight
 from knowledge import KnowledgeSystem
-from holiday import Holiday
-from weather import Weather
 
 # Playwright 浏览器增强（可选）
 try:
@@ -63,9 +61,6 @@ class DailyLife:
         self.total_tokens = 0
         self.memory_core = MemoryCore(memory)
         self.knowledge = KnowledgeSystem(memory)
-        self.weather = Weather()
-        self.holiday = Holiday()
-        self.continuations = self._load_continuations()
 
     def _record_tokens(self, tokens):
         if tokens <= 0:
@@ -79,23 +74,6 @@ class DailyLife:
     def _log(self, msg):
         print("  [DL] " + msg)
     
-
-    def _load_continuations(self):
-        """加载未完成的事件链"""
-        rows = self.memory.conn.execute(
-            "SELECT continuation FROM daily_schedule WHERE date = ? AND continuation != '' ORDER BY time_slot DESC LIMIT 3",
-            (self.today,)
-        ).fetchall()
-        return [r[0] for r in rows if r[0]]
-    
-    def _save_continuation(self, text: str):
-        """保存事件链延续到明天"""
-        self.memory.conn.execute(
-            "UPDATE daily_schedule SET continuation = ? WHERE date = ? AND time_slot = (SELECT MAX(time_slot) FROM daily_schedule WHERE date = ?)",
-            (text, self.today, self.today)
-        )
-        self.memory.conn.commit()
-
     def run_full_day(self):
         print("\n 的一天开始了......")
         print("=" * 40)
