@@ -62,6 +62,15 @@ class DailyLife:
         self.memory_core = MemoryCore(memory)
         self.knowledge = KnowledgeSystem(memory)
 
+    def _record_tokens(self, tokens):
+        if tokens <= 0:
+            return
+        self.memory.conn.execute(
+            "INSERT INTO token_usage (timestamp, prompt_tokens, completion_tokens, total_tokens) VALUES (?, 0, 0, ?)",
+            (datetime.now().isoformat(), tokens)
+        )
+        self.memory.conn.commit()
+    
     def _log(self, msg):
         print("  [DL] " + msg)
     
@@ -138,6 +147,7 @@ class DailyLife:
             content = reply.choices[0].message.content
             usage = reply.usage
             cost = usage.total_tokens if usage else 100
+            self._record_tokens(cost)
             return content, cost
         except:
             return "在%s的时候遇到了一点小事......" % label, 50
