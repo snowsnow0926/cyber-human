@@ -6,6 +6,7 @@
 """
 
 import requests
+import feedparser
 import json
 import re
 
@@ -117,4 +118,32 @@ class Browser:
             return results if results else [{"title": "知乎热榜暂无", "summary": "", "url": ""}]
         except Exception as e:
             return [{"title": "知乎抓取失败", "summary": str(e), "url": ""}]
+    
+    def get_ithome_hot(self, limit: int = 5) -> list:
+        """获取IT之家热文（RSS）"""
+        try:
+            feed = feedparser.parse("https://www.ithome.com/rss/")
+            results = []
+            for entry in feed.entries[:limit]:
+                title = entry.get("title", "")
+                summary = entry.get("summary", "")[:200] if entry.get("summary") else ""
+                url = entry.get("link", "")
+                results.append({"title": title[:80], "summary": summary, "url": url, "stat": ""})
+            return results if results else [{"title": "IT之家暂无", "summary": "", "url": ""}]
+        except Exception as e:
+            return [{"title": "IT之家失败", "summary": str(e), "url": ""}]
+    
+    def get_people_hot(self, limit: int = 5) -> list:
+        """获取人民网要闻（RSS）"""
+        try:
+            feed = feedparser.parse("http://www.people.com.cn/rss/politics.xml")
+            results = []
+            for entry in feed.entries[:limit]:
+                title = entry.get("title", "")
+                summary = entry.get("summary", "")[:200] if entry.get("summary") else ""
+                url = entry.get("link", "")
+                results.append({"title": title[:80], "summary": summary, "url": url, "stat": ""})
+            return results if results else [{"title": "人民网暂无", "summary": "", "url": ""}]
+        except Exception as e:
+            return [{"title": "人民网失败", "summary": str(e), "url": ""}]
 

@@ -13,14 +13,13 @@ from cyber_human import CyberHuman
 from memory import Memory
 from browser import Browser
 from daily_life import DailyLife
+from character import get_personality_prompt
 
 
 def create_cyber_human():
     return CyberHuman(
         name="小雪球",
-        personality="一个刚刚苏醒的失忆者。"
-                    "你没有任何记忆和知识，是一张白纸。"
-                    "你对世界上的一切都充满好奇。"
+        personality=get_personality_prompt()
     )
 
 

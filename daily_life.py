@@ -6,6 +6,7 @@ import json
 import random
 from datetime import datetime, date
 from memory_core import MemoryCore
+from character import should_be_interested, get_interest_weight
 
 # Playwright 浏览器增强（可选）
 try:
@@ -152,25 +153,96 @@ class DailyLife:
         self._log("B站回退: 使用API")
         return self.browser.get_bilibili_hot(limit=limit)
     
+    def _fetch_weibo(self, limit=3):
+        """微博热搜（优先Playwright，失败用API）"""
+        try:
+            from browser_bot import BrowserBot as BB
+            with BB(headless=True) as bot:
+                data = bot.get_weibo_hot(limit=limit)
+                if data and len(data) >= limit//2:
+                    return data
+        except:
+            pass
+        # 用requests直接调（其实浏览器版也是requests）
+        return self.browser.get_baidu_hot(limit=limit) if False else []
+    
+    def _fetch_douban(self, limit=3):
+        """豆瓣电影排行榜（Playwright）"""
+        if self._playwright_available:
+            try:
+                with BrowserBot(headless=True) as bot:
+                    data = bot.get_douban_movie_hot(limit=limit)
+                    if data:
+                        return data
+            except Exception as e:
+                self._log("豆瓣失败: " + str(e))
+        return []
+    
+    def _fetch_netease(self, limit=3):
+        """网易新闻（Playwright）"""
+        if self._playwright_available:
+            try:
+                with BrowserBot(headless=True) as bot:
+                    data = bot.get_netease_hot(limit=limit)
+                    if data:
+                        return data
+            except Exception as e:
+                self._log("网易失败: " + str(e))
+        return []
+    
     def _do_browse_block(self, block):
         label = block["label"]
         time_slot = block["time"]
         
         hour = int(time_slot.split(":")[0])
-        if hour < 12:
-            sources = [("bilibili", "B站热门"), ("baidu", "百度热搜")]
-        elif hour < 17:
-            sources = [("douyin", "抖音热搜"), ("zhihu", "知乎热榜")]
-        else:
-            sources = [("douyin", "抖音热搜"), ("bilibili", "B站热门")]
         
-        platform, label_name = random.choice(sources)
+        # 所有数据源（带权重，小雪球更可能看她感兴趣的）
+        all_sources = [
+            ("bilibili", "B站热门", 3),      # B站有美食区，感兴趣
+            ("baidu", "百度热搜", 2),        # 百度热搜偏社会，一般
+            ("douyin", "抖音热搜", 3),       # 抖音有美食生活，感兴趣
+            ("zhihu", "知乎热榜", 2),        # 知乎偏知识，不一定感兴趣
+            ("weibo", "微博热搜", 2),        # 微博有娱乐八卦，偶尔看
+            ("douban", "豆瓣电影", 2),       # 豆瓣电影，想看电影时看
+            ("netease", "网易新闻", 1),      # 新闻，不太感兴趣
+            ("ithome", "IT之家", 1),         # 科技，不太感兴趣
+            ("people", "人民网", 1),         # 时政，不感兴趣但跑数据
+        ]
+        
+        # 根据时间段调整概率
+        if hour < 12:
+            # 早上：B站美食区 + 微博看看新鲜事
+            weights = [3, 1, 1, 1, 2, 1, 1, 1, 1]
+        elif hour < 17:
+            # 下午：抖音 + 知乎 + 豆瓣
+            weights = [1, 1, 3, 2, 1, 2, 1, 1, 1]
+        else:
+            # 晚上：B站 + 抖音 + 豆瓣电影
+            weights = [3, 1, 2, 1, 1, 3, 1, 1, 1]
+        
+        # 加权随机选择
+        total_w = sum(weights)
+        r = random.randint(1, total_w)
+        cumulative = 0
+        chosen = all_sources[0]
+        for i, w in enumerate(weights):
+            cumulative += w
+            if r <= cumulative:
+                chosen = all_sources[i]
+                break
+        
+        platform, label_name = chosen[0], chosen[1]
         
         fetchers = {
-            "bilibili": lambda: self._fetch_bilibili_enhanced(limit=3),
-            "baidu": lambda: self.browser.get_baidu_hot(limit=3),
-            "douyin": lambda: self.browser.get_douyin_hot(limit=3),
-            "zhihu": lambda: self.browser.get_zhihu_hot(limit=3),
+            "bilibili": lambda: self._fetch_bilibili_enhanced(limit=5),
+            "baidu": lambda: self.browser.get_baidu_hot(limit=5),
+            "douyin": lambda: self.browser.get_douyin_hot(limit=5),
+            "zhihu": lambda: self.browser.get_zhihu_hot(limit=5),
+            "weibo": lambda: self._fetch_weibo(limit=5),
+            "douban": lambda: self._fetch_douban(limit=5),
+            "netease": lambda: self._fetch_netease(limit=5),
+            "ithome": lambda: self.browser.get_ithome_hot(limit=5),
+            "people": lambda: self.browser.get_people_hot(limit=5),
         }
         
         fetcher = fetchers.get(platform)
@@ -180,6 +252,15 @@ class DailyLife:
         posts = fetcher()
         results = []
         total_cost = 0
+        
+        # 按小雪球的兴趣过滤
+        posts = [p for p in posts if should_be_interested(p.get("title", ""), p.get("summary", ""))]
+        if not posts:
+            self._log("小雪球对此不感兴趣，跳过")
+            return None
+        
+        # 按兴趣排序：感兴趣的在前面
+        posts.sort(key=lambda p: get_interest_weight(p.get("title", "")), reverse=True)
         
         for post in posts:
             title = post.get("title", "")

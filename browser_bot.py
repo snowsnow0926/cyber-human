@@ -358,6 +358,92 @@ class BrowserBot:
         
         return results
     
+    # -------- 豆瓣电影排行榜 --------
+    
+    def get_douban_movie_hot(self, limit=5):
+        """用浏览器打开豆瓣排行榜，提取热门电影"""
+        self._log("正在抓取豆瓣电影排行榜...")
+        
+        ok = self.goto("https://movie.douban.com/chart")
+        if not ok:
+            return []
+        
+        time.sleep(2)
+        
+        results = []
+        try:
+            # 提取电影条目
+            items = self.page.query_selector_all(".pl2,tr.item")
+            if not items or len(items) == 0:
+                # 备用：从页面文字中提取
+                body = self.get_text()
+                lines = [l.strip() for l in body.split('\\n') if l.strip() and len(l.strip()) > 10]
+                for line in lines[:limit*3]:
+                    # 找电影名（一般是中文+年份格式）
+                    import re
+                    if re.search(r'[\u4e00-\u9fff]', line) and '豆瓣' not in line and '登录' not in line:
+                        results.append({"title": line[:60], "summary": "", "url": "", "stat": ""})
+                        if len(results) >= limit:
+                            break
+            else:
+                for item in items[:limit]:
+                    title_el = item.query_selector("a")
+                    title = title_el.text_content().strip() if title_el else ""
+                    # 清理空白
+                    title = ' '.join(title.split())
+                    
+                    link_el = item.query_selector("a")
+                    href = link_el.get_attribute("href") or "" if link_el else ""
+                    
+                    # 提取评分
+                    rating_el = item.query_selector(".rating_nums,span.rating")
+                    rating = rating_el.text_content().strip() if rating_el else ""
+                    
+                    if title and len(title) > 2:
+                        results.append({"title": title[:80], "summary": "", "url": href, "stat": rating})
+            
+            self._log("豆瓣电影: %d 条" % len(results))
+        except Exception as e:
+            self._log("豆瓣抓取失败: " + str(e))
+        
+        return results
+    
+    # -------- 网易新闻 --------
+    
+    def get_netease_hot(self, limit=5):
+        """用浏览器打开网易新闻，提取热门新闻标题"""
+        self._log("正在抓取网易新闻...")
+        
+        ok = self.goto("https://news.163.com/")
+        if not ok:
+            return []
+        
+        time.sleep(2)
+        
+        results = []
+        try:
+            # 提取新闻链接
+            links = self.page.query_selector_all("a")
+            for link in links[:limit*5]:
+                href = link.get_attribute("href") or ""
+                txt = link.text_content().strip()
+                if not txt or len(txt) < 8:
+                    continue
+                # 新闻标题一般有长度且出现在news.163.com域名的链接附近
+                if "163.com" in href or len(txt) > 10:
+                    import re
+                    if re.search(r'[\u4e00-\u9fff]', txt) and len(txt) > 8:
+                        if not any(kw in txt for kw in ['登录', '注册', '首页', '新闻', '搜索', '邮箱', 'APP', '更多']):
+                            entry = next((e for e in results if e['title'] == txt[:60]), None)
+                            if not entry:
+                                results.append({"title": txt[:60], "summary": "", "url": href if "163.com" in href else "", "stat": ""})
+                                if len(results) >= limit:
+                                    break
+        except Exception as e:
+            self._log("网易抓取失败: " + str(e))
+        
+        return results
+    
     # -------- 混合模式 --------
         """
         混合模式获取知乎：先用API（我们的修复版），
