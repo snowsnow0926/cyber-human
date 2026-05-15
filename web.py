@@ -88,6 +88,7 @@ HTML_TEMPLATE = """
 
     <div class="nav">
         <a href="?tab=browse" class="{{ 'active' if tab == 'browse' else '' }}">🌐 今日浏览</a>
+        <a href="?tab=timeline" class="{{ 'active' if tab == 'timeline' else '' }}">📋 时间线</a>
         <a href="?tab=thoughts" class="{{ 'active' if tab == 'thoughts' else '' }}">💭 想法</a>
         <a href="?tab=diary" class="{{ 'active' if tab == 'diary' else '' }}">📝 日记</a>
         <a href="?tab=phone" class="{{ 'active' if tab == 'phone' else '' }}">📱 手机</a>
@@ -122,6 +123,25 @@ HTML_TEMPLATE = """
             input.value = '';
         }
     </script>
+
+    {% elif tab == "timeline" %}
+    <div class="card">
+        <h2>📋 今天的时间线</h2>
+        {% for s in schedule %}
+        <div class="entry" style="border-left:3px solid {{ s.color }};padding-left:12px;margin-bottom:12px">
+            <div style="color:#888;font-size:12px">{{ s.time }} · {{ s.label }}</div>
+            <div style="color:#ccc;font-size:13px;margin:4px 0;line-height:1.5">{{ s.content[:120] }}{% if s.content|length > 120 %}…{% endif %}</div>
+            {% if s.is_event %}
+            <span style="font-size:11px;color:#ffd700">✨ 事件</span>
+            {% endif %}
+            {% if s.token_cost > 0 %}
+            <span style="font-size:11px;color:#5a9eff">~{{ s.token_cost }} tokens</span>
+            {% endif %}
+        </div>
+        {% else %}
+        <div class="empty">今天还没开始呢</div>
+        {% endfor %}
+    </div>
 
     {% elif tab == "diary" %}
         {% for d in diaries %}
@@ -322,6 +342,34 @@ def index():
         **get_token_stats(mem)
     }
     
+    today = __import__('datetime').date.today().isoformat()
+    
+    # 时间线数据
+    c = mem.conn.execute("""
+        SELECT time_slot, label, content, is_event, event_type, token_cost
+        FROM daily_schedule WHERE date = ? ORDER BY time_slot
+    """, (today,))
+    raw_schedule = c.fetchall()
+    schedule = []
+    sched_colors = {
+        "起床": "#ffa500", "早餐": "#87ceeb",
+        "上网学习": "#7eb8ff", "出门散步": "#90ee90",
+        "午餐时间": "#ff7f7f", "下午探索": "#7eb8ff",
+        "下午茶/摸鱼": "#dda0dd", "晚餐/刷热搜": "#ff7f7f",
+        "晚间娱乐": "#ff69b4", "洗漱整理": "#87ceeb",
+        "睡前反思": "#7eb8ff", "进入梦乡": "#6666cc"
+    }
+    for r in raw_schedule:
+        schedule.append({
+            "time": r[0],
+            "label": r[1],
+            "content": r[2][:120] if r[2] else "",
+            "is_event": bool(r[3]),
+            "event_type": r[4] or "",
+            "token_cost": r[5] or 0,
+            "color": sched_colors.get(r[1], "#555")
+        })
+    
     # 今日计划
     import json
     today = __import__('datetime').date.today().isoformat()
@@ -360,6 +408,7 @@ def index():
         diaries=diaries,
         stats=stats,
         notifications=notifications,
+        schedule=schedule,
         daily_plan=daily_plan,
         time_now=today,
         birthday="2026-05-15"
