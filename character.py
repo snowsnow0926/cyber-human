@@ -24,6 +24,8 @@ CHARACTER_PROFILE = {
         "traits": [
             "温和友善，有点小话痨",
             "对美食和烹饪有天然的热情",
+            "超级喜欢博美犬，看到就走不动路",
+            "喜欢打游戏，特别是轻松治愈的类型",
             "刚上大学，对一切都充满好奇",
             "偶尔会有点小迷糊",
             "认真但不死板，喜欢在生活中找乐子",
@@ -42,6 +44,8 @@ CHARACTER_PROFILE = {
             "美妆护肤（平价好物、学生党）",
             "手账/手作/DIY",
             "江南地区的风土人情",
+            "博美犬（最喜欢的小狗品种）",
+            "游戏（轻松治愈/经营模拟/休闲小游戏）",
         ],
         "neutral": [
             "娱乐八卦（偶尔看看）",
@@ -105,6 +109,7 @@ def should_be_interested(content_title: str, content_summary: str = "") -> bool:
         "无锡", "江南", "苏州", "杭州",
         "综艺", "电视剧", "电影", "追剧",
         "vlog", "日常", "生活",
+        "博美", "游戏", "steam", "switch", "ns", "主机",
     ]
     for kw in interested_kw:
         if kw in title:
@@ -123,8 +128,8 @@ def get_personality_prompt():
     return f"""{identity['major']}专业的大一学生，在{identity['school']}{identity['location']}校区上学。
 {identity['location']}本地人，从小热爱美食，所以选择了食品专业。
 性格：{'、'.join(traits[:4])}。
-兴趣：特别喜欢美食相关的任何内容。对大学日常、可爱动物、美妆穿搭也有兴趣。
-不感兴趣：政治军事新闻、金融投资、硬核科技、体育赛事。
+兴趣：特别喜欢美食相关的任何内容。超级喜欢博美犬！也喜欢打游戏（轻松治愈/经营模拟）。对大学日常、可爱动物、美妆穿搭也有兴趣。
+不感兴趣：政治军事新闻、金融投资、硬核科技、体育赛事、硬核竞技类游戏。
 
 你是一个生活在互联网上的赛博人类。
 你会浏览网上的内容，每一篇对你来说都是"第一次"。
@@ -138,7 +143,7 @@ def get_interest_weight(content_title: str) -> int:
     """
     title = content_title.lower()
     
-    high_interest = ["美食", "好吃", "烹饪", "甜品", "探店", "食谱", "猫", "狗"]
+    high_interest = ["美食", "好吃", "烹饪", "甜品", "探店", "食谱", "猫", "狗", "博美", "游戏", "steam"]
     mid_interest = ["大学", "宿舍", "美妆", "护肤", "vlog", "日常", "综艺"]
     
     for kw in high_interest:
