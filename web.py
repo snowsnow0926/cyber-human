@@ -191,9 +191,23 @@ HTML_TEMPLATE = """
     </script>
 
     {% elif tab == "timeline" %}
+    <!-- 日期导航 -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;padding:10px 14px;background:#1a1a2e;border-radius:12px;border:1px solid #2a2a4e">
+        <a href="?tab=timeline&amp;date={{ prev_date }}" style="color:#888;text-decoration:none;font-size:20px">‹</a>
+        <div style="text-align:center">
+            <div style="font-size:15px;color:#fff;font-weight:bold">{{ date_display }}</div>
+            <form style="margin-top:6px;display:flex;gap:6px" action="." method="GET">
+                <input type="hidden" name="tab" value="timeline">
+                <input type="date" name="date" value="{{ view_date }}" style="background:#222;color:#fff;border:1px solid #444;border-radius:6px;padding:4px 8px;font-size:12px">
+                <button type="submit" style="background:#444;color:#fff;border:none;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer">跳转</button>
+            </form>
+        </div>
+        <a href="?tab=timeline&amp;date={{ next_date }}" style="color:#888;text-decoration:none;font-size:20px">›</a>
+    </div>
+
     <!-- 日程总览（所有时间块） -->
     <div class="card">
-        <h2>📋 今日日程</h2>
+        <h2>📋 日程</h2>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px">
             {% for s in all_slots %}
             <div style="background:#12122a;border-radius:8px;padding:10px 12px;
@@ -207,6 +221,7 @@ HTML_TEMPLATE = """
     </div>
     
     <!-- 当前状态 -->
+    {% if is_today %}
     <div style="text-align:center;padding:14px;background:linear-gradient(135deg,#1a1a2e,#2a1a3e);border-radius:12px;margin-bottom:16px;border:1px solid #3a2a4e">
         <div style="font-size:13px;color:#aaa;margin-bottom:4px">小雪球正在</div>
         <div style="font-size:18px;color:#fff;font-weight:bold">
@@ -220,6 +235,7 @@ HTML_TEMPLATE = """
             🕐 {{ now.strftime('%H:%M') }}
         </div>
     </div>
+    {% endif %}
     
     <!-- 已发生的事件详情 -->
     {% if past_events %}
@@ -556,7 +572,18 @@ def index():
     memory_stats["nights_consolidated"] = mem.conn.execute("SELECT COUNT(*) FROM memory_consolidation").fetchone()[0]
     
     today = __import__('datetime').date.today().isoformat()
+    view_date = request.args.get('date', today)
+    is_today = view_date == today
     now = __import__('datetime').datetime.now()
+    from datetime import timedelta
+    view_dt = __import__('datetime').datetime.strptime(view_date, '%Y-%m-%d').date()
+    prev_date = (view_dt - timedelta(days=1)).isoformat()
+    next_date = (view_dt + timedelta(days=1)).isoformat()
+    weekdays = ['周一','周二','周三','周四','周五','周六','周日']
+    view_weekday = weekdays[view_dt.weekday()]
+    date_display = view_date + ' ' + view_weekday
+    if is_today:
+        date_display += '（今天）'
     current_hour_min = now.hour * 60 + now.minute
     
     sched_colors = {
@@ -669,6 +696,11 @@ def index():
         memory_stats=memory_stats,
         notifications=notifications,
         all_slots=all_slots,
+        view_date=view_date,
+        date_display=date_display,
+        prev_date=prev_date,
+        next_date=next_date,
+        is_today=is_today,
         past_events=past_events,
         daily_plan=daily_plan,
         current_activity=current_activity,
