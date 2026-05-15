@@ -8,6 +8,7 @@
 import requests
 import feedparser
 import json
+import json
 import re
 
 class Browser:
@@ -118,6 +119,30 @@ class Browser:
             return results if results else [{"title": "知乎热榜暂无", "summary": "", "url": ""}]
         except Exception as e:
             return [{"title": "知乎抓取失败", "summary": str(e), "url": ""}]
+    
+    def get_douyin_hot(self, limit: int = 5) -> list:
+        """获取抖音热搜"""
+        try:
+            resp = requests.get(
+                "https://www.douyin.com/aweme/v1/web/hot/search/list/",
+                params={"device_platform": "webapp", "aid": "6383"},
+                headers={**self.HEADERS, "Accept": "application/json"},
+                timeout=10
+            )
+            data = resp.json()
+            results = []
+            for item in data.get("data", {}).get("word_list", [])[:limit]:
+                word = item.get("word", "")
+                hot_value = item.get("hot_value", "")
+                results.append({
+                    "title": word[:80],
+                    "summary": "",
+                    "url": "https://www.douyin.com/search/" + word,
+                    "stat": str(hot_value) if hot_value else ""
+                })
+            return results if results else [{"title": "抖音暂无", "summary": "", "url": ""}]
+        except Exception as e:
+            return [{"title": "抖音抓取失败", "summary": str(e), "url": ""}]
     
     def get_ithome_hot(self, limit: int = 5) -> list:
         """获取IT之家热文（RSS）"""

@@ -85,7 +85,10 @@ class KnowledgeSystem:
         learning_indicators = [
             "学到了", "第一次知道", "原来", "才发现",
             "了解了", "认识到了", "懂了", "知道了",
-            "记住了", "get到"
+            "记住了", "get到",
+            "竟然", "居然", "哇 ", "好奇",
+            "好有意思", "有趣", "好神奇",
+            "种草了", "马住了",
         ]
         
         has_learning = any(ind in thought for ind in learning_indicators)

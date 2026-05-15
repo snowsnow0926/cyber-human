@@ -93,6 +93,7 @@ HTML_TEMPLATE = """
         <a href="?tab=diary" class="{{ 'active' if tab == 'diary' else '' }}">📝 日记</a>
         <a href="?tab=phone" class="{{ 'active' if tab == 'phone' else '' }}">📱 手机</a>
         <a href="?tab=stats" class="{{ 'active' if tab == 'stats' else '' }}">📊 统计</a>
+        <a href="?tab=knowledge" class="{{ 'active' if tab == 'knowledge' else '' }}">📚 知识</a>
         <a href="?tab=chat" class="{{ 'active' if tab == 'chat' else '' }}">💬 聊天</a>
     </div>
 

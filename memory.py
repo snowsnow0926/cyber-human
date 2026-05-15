@@ -9,6 +9,7 @@ class Memory:
     def __init__(self, db_path: str = "cyber_memory.db"):
         self.conn = sqlite3.connect(db_path)
         self._create_tables()
+        self._migrate()
 
     def _create_tables(self):
         cursor = self.conn.cursor()
@@ -106,6 +107,13 @@ class Memory:
             (limit,)
         )
         return cursor.fetchall()
+
+    def _migrate(self):
+        cursor = self.conn.cursor()
+        cursor.execute("CREATE TABLE IF NOT EXISTS daily_schedule (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, time_slot TEXT, activity_type TEXT, label TEXT, content TEXT, is_event INTEGER DEFAULT 0, event_type TEXT DEFAULT '', token_cost INTEGER DEFAULT 0, source_platform TEXT DEFAULT '', created_at TEXT DEFAULT '')")
+        cursor.execute("CREATE TABLE IF NOT EXISTS memory_consolidation (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL UNIQUE, consolidated_at TEXT, total_before INTEGER DEFAULT 0, promoted_to_mid INTEGER DEFAULT 0, promoted_to_long INTEGER DEFAULT 0, forgotten INTEGER DEFAULT 0, summary TEXT)")
+        cursor.execute("CREATE TABLE IF NOT EXISTS knowledge_reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, knowledge_id INTEGER, review_date TEXT, understanding TEXT, confidence_before INTEGER, confidence_after INTEGER)")
+        self.conn.commit()
 
     def close(self):
         self.conn.close()

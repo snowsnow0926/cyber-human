@@ -61,6 +61,9 @@ class DailyLife:
         self.total_tokens = 0
         self.memory_core = MemoryCore(memory)
         self.knowledge = KnowledgeSystem(memory)
+
+    def _log(self, msg):
+        print("  [DL] " + msg)
     
     def run_full_day(self):
         print("\n 的一天开始了......")
