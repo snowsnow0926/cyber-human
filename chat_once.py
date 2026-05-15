@@ -8,7 +8,7 @@ from cyber_human import CyberHuman
 from memory import Memory
 
 def chat_once(message: str):
-    human = CyberHuman(name="小蓝")
+    human = CyberHuman(name="小雪球")
     memory = Memory()
     
     recent = memory.get_recent_thoughts(5)

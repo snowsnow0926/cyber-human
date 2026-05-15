@@ -59,3 +59,30 @@ class CyberHuman:
         )
         
         return reply.choices[0].message.content
+
+    def chat_with_tokens(self, user_input: str) -> tuple:
+        """
+        聊天并返回 token 消耗信息。
+        返回: (回复文本, {prompt_tokens, completion_tokens, total_tokens})
+        """
+        messages = [{"role": "system", "content": self.system_prompt}]
+        messages.append({"role": "user", "content": user_input})
+        
+        reply = self.client.chat.completions.create(
+            model="deepseek-v4-flash",
+            messages=messages,
+            temperature=0.9,
+            max_tokens=800
+        )
+        
+        usage = reply.usage
+        if usage:
+            token_info = {
+                "prompt_tokens": usage.prompt_tokens or 0,
+                "completion_tokens": usage.completion_tokens or 0,
+                "total_tokens": usage.total_tokens or 0
+            }
+        else:
+            token_info = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        
+        return reply.choices[0].message.content, token_info

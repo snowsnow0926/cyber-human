@@ -17,7 +17,7 @@ from browser import Browser
 def create_cyber_human():
     """创建并返回一个赛博人类"""
     return CyberHuman(
-        name="小蓝",
+        name="小雪球",
         personality="一个刚刚苏醒的失忆者。"
                     "你没有任何记忆和知识，是一张白纸。"
                     "你对世界上的一切都充满好奇。"
@@ -77,7 +77,7 @@ def do_browse_and_think(human, browser, memory):
             thought = human.think_about(content)
             print(f"  💭 {thought[:100]}…")
             
-            memory.remember_thought(thought=thought, source=label)
+            memory.remember_thought(thought=thought, source=f"{label} · {title[:30]}")
             all_thoughts.append(thought)
     
     # 写今日日记
