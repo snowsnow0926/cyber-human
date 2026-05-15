@@ -93,10 +93,76 @@ HTML_TEMPLATE = """
         <a href="?tab=diary" class="{{ 'active' if tab == 'diary' else '' }}">📝 日记</a>
         <a href="?tab=phone" class="{{ 'active' if tab == 'phone' else '' }}">📱 手机</a>
         <a href="?tab=stats" class="{{ 'active' if tab == 'stats' else '' }}">📊 统计</a>
+        <a href="?tab=knowledge" class="{{ 'active' if tab == 'knowledge' else '' }}">📚 知识</a>
         <a href="?tab=chat" class="{{ 'active' if tab == 'chat' else '' }}">💬 聊天</a>
+        <a href="?tab=control" class="{{ 'active' if tab == 'control' else '' }}">⚙️ 控制</a>
     </div>
 
-    {% if tab == "chat" %}
+    {% if tab == "control" %}
+    <div class="card">
+        <h2>&#x2699;&#xFE0F; 控制面板</h2>
+        <p style="color:#888;font-size:13px;margin-bottom:16px">手动控制小雪球的运行</p>
+        
+        <div style="display:flex;flex-direction:column;gap:12px">
+            <button onclick="clearData()" style="background:#ff4757;color:#fff;border:none;padding:12px 20px;border-radius:10px;font-size:14px;cursor:pointer">
+                &#x1F5D1; 清空所有数据
+            </button>
+            <div style="font-size:11px;color:#666;margin:-8px 0 0">删除浏览记录、想法、日记、知识、记忆，重新开始</div>
+            
+            <button onclick="simulateDay()" style="background:#2ed573;color:#fff;border:none;padding:12px 20px;border-radius:10px;font-size:14px;cursor:pointer">
+                &#x25B6; 模拟一天生活
+            </button>
+            <div style="font-size:11px;color:#666;margin:-8px 0 0">让小雪球过完整一天（浏览内容、产生想法、学习知识），约需2-3分钟</div>
+        </div>
+        
+        <div id="control-result" style="margin-top:12px;font-size:13px;color:#888;display:none"></div>
+    </div>
+    
+    <script>
+    async function clearData() {
+        if (!confirm("确定要清空所有数据吗？此操作不可撤销！")) return;
+        const btn = document.querySelector('button:nth-child(1)');
+        btn.disabled = true;
+        btn.textContent = '⏳ 清空中...';
+        
+        try {
+            const r = await fetch('/api/clear_data', {method:'POST'});
+            const d = await r.json();
+            document.getElementById('control-result').style.display = 'block';
+            document.getElementById('control-result').textContent = d.message;
+            document.getElementById('control-result').style.color = d.success ? '#2ed573' : '#ff4757';
+        } catch(e) {
+            document.getElementById('control-result').style.display = 'block';
+            document.getElementById('control-result').textContent = '请求失败: ' + e.message;
+            document.getElementById('control-result').style.color = '#ff4757';
+        }
+        btn.disabled = false;
+        btn.textContent = '🗑 清空所有数据';
+    }
+    
+    async function simulateDay() {
+        const btn = document.querySelector('button:nth-child(3)');
+        btn.disabled = true;
+        btn.textContent = '⏳ 模拟中（约2-3分钟）...';
+        document.getElementById('control-result').style.display = 'block';
+        document.getElementById('control-result').textContent = '⏳ 正在模拟，请稍候...';
+        document.getElementById('control-result').style.color = '#ffa502';
+        
+        try {
+            const r = await fetch('/api/simulate_day', {method:'POST'});
+            const d = await r.json();
+            document.getElementById('control-result').textContent = d.message;
+            document.getElementById('control-result').style.color = d.success ? '#2ed573' : '#ff4757';
+        } catch(e) {
+            document.getElementById('control-result').textContent = '请求失败: ' + e.message;
+            document.getElementById('control-result').style.color = '#ff4757';
+        }
+        btn.disabled = false;
+        btn.textContent = '▶ 模拟一天生活';
+    }
+    </script>
+    
+    {% elif tab == "chat" %}
     <div class="card">
         <h2>💬 跟小雪球聊天</h2>
         <div class="chat-box">
@@ -194,6 +260,25 @@ HTML_TEMPLATE = """
     </div>
     {% endif %}
 
+    {% elif tab == "knowledge" %}
+    <div class="card">
+        <h2>&#x1F4DA; 小雪球的知识库</h2>
+        {% for k in knowledges %}
+        <div class="entry">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+                <span class="source">{{ k[4] }}</span>
+                <span style="font-size:11px;color:#888">
+                    理解度: {% for i in range(k[6]) %}&#x1F9E0;{% endfor %}{% for i in range(5-k[6]) %}&#x1F90D;{% endfor %}
+                </span>
+            </div>
+            <div class="thought">{{ k[3][:120] }}</div>
+            <div class="time" style="font-size:11px">{{ k[1][:16] }} &#xB7; 复习{{ k[7] }}次</div>
+        </div>
+        {% else %}
+        <div class="empty">还没有学到知识 &#x1F4D6;</div>
+        {% endfor %}
+    </div>
+
     {% elif tab == "diary" %}
         {% for d in diaries %}
         <div class="card">
@@ -262,10 +347,7 @@ HTML_TEMPLATE = """
     <div class="card">
         <h2>⚡ Token 消耗</h2>
         <div style="font-size:13px;color:#888;line-height:1.8">
-            <div>📅 <strong style="color:#fff;">{{ time_now }}</strong></div>
-            <div style="margin-top:6px">今日调用: <strong style="color:#fff;">{{ stats.api_calls }}</strong> 次</div>
             <div>今日消耗: <strong style="color:#fff;">{{ stats.today_tokens }}</strong> tokens</div>
-            <div style="margin-top:10px;border-top:1px solid #333;padding-top:8px">总调用: <strong style="color:#fff;">{{ stats.api_calls_total }}</strong> 次</div>
             <div>总消耗: <strong style="color:#fff;">{{ stats.total_tokens }}</strong> tokens</div>
             <div>API调用次数: <strong style="color:#fff;">{{ stats.api_calls }}</strong> 次</div>
             <div style="margin-top:8px;font-size:11px;color:#555">
@@ -295,6 +377,25 @@ HTML_TEMPLATE = """
                 <div class="stat-num">{{ memory_stats.nights_consolidated }}</div>
                 <div class="stat-label">夜间巩固</div>
             </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>&#x1F4DA; 知识体系</h2>
+        <div class="stat-grid">
+            <div class="stat-item">
+                <div class="stat-num">{{ kstats.total }}</div>
+                <div class="stat-label">学到的知识</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-num">{{ kstats.forgotten }}</div>
+                <div class="stat-label">已遗忘</div>
+            </div>
+        </div>
+        <div style="margin-top:12px;font-size:13px;color:#888;line-height:1.8">
+            {% for cat, cnt in kstats.categories.items() %}
+            <span style="display:inline-block;background:#2a2a3a;padding:2px 8px;border-radius:8px;margin:2px">{{ cat }}: {{ cnt }}条</span>
+            {% endfor %}
         </div>
     </div>
 
@@ -376,9 +477,6 @@ def get_token_stats(mem):
     c = mem.conn.execute("SELECT COUNT(*) FROM token_usage WHERE timestamp LIKE ?", (f"{today}%",))
     api_calls = c.fetchone()[0]
     
-    c = mem.conn.execute("SELECT COUNT(*) FROM token_usage")
-    api_calls_total = c.fetchone()[0]
-    
     # DeepSeek V4 Flash ≈ ¥1/百万token
     today_cost = round(today_tokens / 1000000, 4)
     total_cost = round(total_tokens / 1000000, 4)
@@ -387,7 +485,6 @@ def get_token_stats(mem):
         "today_tokens": today_tokens,
         "total_tokens": total_tokens,
         "api_calls": api_calls,
-        "api_calls_total": api_calls_total,
         "today_cost": today_cost,
         "total_cost": total_cost
     }
@@ -434,6 +531,11 @@ def index():
             "color": app_colors.get(src, "#5a9eff")
         })
     
+    from knowledge import KnowledgeSystem
+    ks = KnowledgeSystem(mem)
+    kstats = ks.get_stats()
+    knowledges = ks.get_all_knowledge(limit=30)
+
     stats = {
         "browse": bc, "thoughts": tc,
         "diaries": dc, "sources": sc,
@@ -555,6 +657,8 @@ def index():
         thoughts_all=thoughts_all,
         diaries=diaries,
         stats=stats,
+        kstats=kstats,
+        knowledges=knowledges,
         memory_stats=memory_stats,
         notifications=notifications,
         all_slots=all_slots,
@@ -600,6 +704,49 @@ def chat_api():
     mem.close()
     return jsonify({"reply": reply})
 
+
+@app.route("/api/clear_data", methods=["POST"])
+def api_clear_data():
+    import os, sqlite3
+    try:
+        db = os.path.join(os.path.dirname(__file__), "cyber_memory.db")
+        # Create backup
+        import shutil
+        if os.path.exists(db):
+            shutil.copy2(db, db + ".bak2")
+            os.remove(db)
+        # Re-create empty DB
+        m = Memory()
+        m.close()
+        return jsonify({"success": True, "message": "✅ 数据已清空，从零开始"})
+    except Exception as e:
+        return jsonify({"success": False, "message": "❌ 清空失败: " + str(e)})
+
+@app.route("/api/simulate_day", methods=["POST"])
+def api_simulate_day():
+    import subprocess, threading
+    
+    def run_simulation():
+        try:
+            proc = subprocess.run(
+                ["/home/ubuntu/cyber-human/venv/bin/python3", "/home/ubuntu/cyber-human/main.py", "--auto"],
+                capture_output=True, text=True, timeout=300
+            )
+            result_file = "/tmp/cyber_sim_result.txt"
+            with open(result_file, "w") as f:
+                f.write("✅ 模拟完成！共消耗 ~" + str(proc.stdout.count("tokens")) + " 次API调用\n")
+                f.write(proc.stdout[-500:] if len(proc.stdout) > 500 else proc.stdout)
+        except subprocess.TimeoutExpired:
+            with open("/tmp/cyber_sim_result.txt", "w") as f:
+                f.write("❌ 模拟超时（超过5分钟）")
+        except Exception as e:
+            with open("/tmp/cyber_sim_result.txt", "w") as f:
+                f.write("❌ 模拟失败: " + str(e))
+    
+    thread = threading.Thread(target=run_simulation)
+    thread.start()
+    
+    return jsonify({"success": True, "message": "⏳ 模拟已启动，约2-3分钟后刷新页面查看结果"})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5010, debug=False)
