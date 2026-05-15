@@ -126,7 +126,7 @@ HTML_TEMPLATE = """
         btn.textContent = '⏳ 清空中...';
         
         try {
-            const r = await fetch('/api/clear_data', {method:'POST'});
+            const r = await fetch('/cyber-human/api/clear_data', {method:'POST'});
             const d = await r.json();
             document.getElementById('control-result').style.display = 'block';
             document.getElementById('control-result').textContent = d.message;
@@ -149,7 +149,7 @@ HTML_TEMPLATE = """
         document.getElementById('control-result').style.color = '#ffa502';
         
         try {
-            const r = await fetch('/api/simulate_day', {method:'POST'});
+            const r = await fetch('/cyber-human/api/simulate_day', {method:'POST'});
             const d = await r.json();
             document.getElementById('control-result').textContent = d.message;
             document.getElementById('control-result').style.color = d.success ? '#2ed573' : '#ff4757';
@@ -347,9 +347,11 @@ HTML_TEMPLATE = """
     <div class="card">
         <h2>⚡ Token 消耗</h2>
         <div style="font-size:13px;color:#888;line-height:1.8">
+            <div>📅 <strong style="color:#fff;">{{ time_now }}</strong></div>
+            <div style="margin-top:6px">今日调用: <strong style="color:#fff;">{{ stats.api_calls }}</strong> 次</div>
             <div>今日消耗: <strong style="color:#fff;">{{ stats.today_tokens }}</strong> tokens</div>
+            <div style="margin-top:10px;border-top:1px solid #333;padding-top:8px">总调用: <strong style="color:#fff;">{{ stats.api_calls_total }}</strong> 次</div>
             <div>总消耗: <strong style="color:#fff;">{{ stats.total_tokens }}</strong> tokens</div>
-            <div>API调用次数: <strong style="color:#fff;">{{ stats.api_calls }}</strong> 次</div>
             <div style="margin-top:8px;font-size:11px;color:#555">
                 按 DeepSeek V4 Flash 价格估算<br>
                 今日费用: ~¥{{ stats.today_cost }}
@@ -477,6 +479,9 @@ def get_token_stats(mem):
     c = mem.conn.execute("SELECT COUNT(*) FROM token_usage WHERE timestamp LIKE ?", (f"{today}%",))
     api_calls = c.fetchone()[0]
     
+    c = mem.conn.execute("SELECT COUNT(*) FROM token_usage")
+    api_calls_total = c.fetchone()[0]
+    
     # DeepSeek V4 Flash ≈ ¥1/百万token
     today_cost = round(today_tokens / 1000000, 4)
     total_cost = round(total_tokens / 1000000, 4)
@@ -485,6 +490,7 @@ def get_token_stats(mem):
         "today_tokens": today_tokens,
         "total_tokens": total_tokens,
         "api_calls": api_calls,
+        "api_calls_total": api_calls_total,
         "today_cost": today_cost,
         "total_cost": total_cost
     }
@@ -536,6 +542,7 @@ def index():
     kstats = ks.get_stats()
     knowledges = ks.get_all_knowledge(limit=30)
 
+    time_now = __import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M")
     stats = {
         "browse": bc, "thoughts": tc,
         "diaries": dc, "sources": sc,
