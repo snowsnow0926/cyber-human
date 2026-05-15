@@ -173,13 +173,19 @@ class DailyLife:
             if stat:
                 content += "\n" + stat
             
-            thought = self.human.think_about(content)
+            thought, importance = self.human.think_about(content)
             
             self.memory.remember_thought(
                 thought=thought,
                 source="%s - %s" % (label_name, title[:30]),
                 mood=summary[:100] if summary else title[:60]
             )
+            # 存储重要程度（方向B - 记忆系统）
+            self.memory.conn.execute(
+                "UPDATE thoughts SET importance = ? WHERE id = (SELECT MAX(id) FROM thoughts)",
+                (importance,)
+            )
+            self.memory.conn.commit()
             
             total_cost += 100
             results.append({"title": title, "thought": thought[:100]})

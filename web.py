@@ -125,49 +125,74 @@ HTML_TEMPLATE = """
     </script>
 
     {% elif tab == "timeline" %}
+    <!-- 日程总览（所有时间块） -->
     <div class="card">
-        <h2>📋 今天的时间线</h2>
-        <div style="text-align:center;padding:10px;background:#12122a;border-radius:8px;margin-bottom:12px">
-            <div style="font-size:14px;color:#fff">
-                {% if current_activity %}
-                🟢 现在：{{ current_activity }}
+        <h2>📋 今日日程</h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px">
+            {% for s in all_slots %}
+            <div style="background:#12122a;border-radius:8px;padding:10px 12px;
+                        border-left:3px solid {{ s.color }};
+                        display:flex;align-items:center;gap:8px">
+                <span style="font-size:16px;font-weight:bold;color:{{ s.color }}">{{ s.time }}</span>
+                <span style="font-size:13px;color:#ccc">{{ s.label }}</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    
+    <!-- 当前状态 -->
+    <div style="text-align:center;padding:14px;background:linear-gradient(135deg,#1a1a2e,#2a1a3e);border-radius:12px;margin-bottom:16px;border:1px solid #3a2a4e">
+        <div style="font-size:13px;color:#aaa;margin-bottom:4px">小雪球正在</div>
+        <div style="font-size:18px;color:#fff;font-weight:bold">
+            {% if current_activity %}
+            {{ current_activity }}
+            {% else %}
+            💤 休息中
+            {% endif %}
+        </div>
+        <div style="font-size:11px;color:#555;margin-top:6px">
+            🕐 {{ now.strftime('%H:%M') }}
+        </div>
+    </div>
+    
+    <!-- 已发生的事件详情 -->
+    {% if past_events %}
+    <div class="card">
+        <h2>📖 今天发生了什么</h2>
+        {% for s in past_events %}
+        <div class="entry" style="border-left:3px solid {{ s.color }};padding:10px 0 10px 14px;margin-bottom:8px">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap">
+                <span style="font-size:13px;font-weight:bold;color:{{ s.color }}">{{ s.time }}</span>
+                {% if s.source_platform %}
+                <span style="font-size:11px;background:#1a2a4e;color:#5a9eff;padding:2px 8px;border-radius:4px">{{ s.source_platform }}</span>
                 {% else %}
-                💤 小雪球休息中
+                <span style="font-size:12px;color:#888">{{ s.label }}</span>
+                {% endif %}
+                {% if s.is_event %}
+                <span style="font-size:10px;background:#3a2a1e;color:#ffd700;padding:2px 6px;border-radius:4px">✨ 事件</span>
                 {% endif %}
             </div>
-            <div style="font-size:11px;color:#555;margin-top:4px">
-                服务器时间 {{ now.strftime('%H:%M') }}
-            </div>
-        </div>
-        {% for s in schedule %}
-        <div class="entry" style="border-left:3px solid {{ s.color }};padding-left:12px;margin-bottom:12px;
-            {{ 'opacity:0.4' if not s.past else '' }}">
-            <div style="color:#888;font-size:12px">{{ s.time }} · {{ s.label }}</div>
-            {% if s.past %}
             {% if s.content %}
-            <div style="color:#ccc;font-size:13px;margin:4px 0;line-height:1.5">{{ s.content[:120] }}{% if s.content|length > 120 %}…{% endif %}</div>
+            <div style="color:#ccc;font-size:13px;line-height:1.6">{{ s.content[:200] }}</div>
             {% endif %}
             {% if s.thoughts %}
-            <div style="margin-top:6px;padding:8px;background:#12122a;border-radius:6px">
+            <div style="margin-top:8px;padding:8px 10px;background:#12122a;border-radius:8px">
                 {% for t in s.thoughts %}
                 <div style="font-size:12px;color:#b0b0c0;margin-bottom:6px;line-height:1.5">
-                    <span style="color:#5a9eff">{{ t.title }}</span><br>
-                    💭 {{ t.text[:80] }}{% if t.text|length > 80 %}…{% endif %}
+                    <span style="color:#5a9eff">{{ t.title.split('·')[0] if '·' in t.title else t.title }}</span><br>
+                    💭 {{ t.text[:100] }}{% if t.text|length > 100 %}…{% endif %}
                 </div>
                 {% endfor %}
             </div>
             {% endif %}
-            {% if s.is_event %}
-            <span style="font-size:11px;color:#ffd700">✨ 事件</span>
-            {% endif %}
-            {% else %}
-            <div style="color:#555;font-size:12px;padding:4px 0">🔒 还没到这个时间</div>
-            {% endif %}
         </div>
-        {% else %}
-        <div class="empty">今天还没开始呢</div>
         {% endfor %}
     </div>
+    {% else %}
+    <div class="card">
+        <div class="empty">今天还没开始呢 🌙</div>
+    </div>
+    {% endif %}
 
     {% elif tab == "diary" %}
         {% for d in diaries %}
@@ -192,7 +217,16 @@ HTML_TEMPLATE = """
             <div style="background:#1c1c1e;border-radius:12px;padding:12px;margin-bottom:8px;
                         border-left:3px solid {{ n.color }}">
                 <div style="color:#888;font-size:11px">{{ n.app }}</div>
+                {% if n.url %}
+                <a href="{{ n.url }}" target="_blank" rel="noopener"
+                   style="color:#fff;margin:4px 0;font-size:13px;display:block;text-decoration:none"
+                   onmouseover="this.style.color='{{ n.color }}'"
+                   onmouseout="this.style.color='#fff'">
+                    {{ n.title }} ↗
+                </a>
+                {% else %}
                 <div style="color:#fff;margin:4px 0;font-size:13px">{{ n.title }}</div>
+                {% endif %}
                 <div style="color:#aaa;font-size:11px">{{ n.time }}</div>
             </div>
             {% else %}
@@ -263,8 +297,9 @@ HTML_TEMPLATE = """
             🎯 {{ daily_plan.focus }}
         </div>
         {% for item in daily_plan.plans %}
-        <div class="entry" style="font-size:13px">
+        <div class="entry" style="font-size:13px;display:flex;align-items:center;gap:8px">
             <span style="color:#5a9eff">{{ item.icon }}</span>
+            <span style="background:#1a2a4e;color:#5a9eff;font-size:11px;padding:2px 6px;border-radius:4px;white-space:nowrap">{{ item.platform_name }}</span>
             {{ item.reason }}
         </div>
         {% endfor %}
@@ -343,7 +378,7 @@ def index():
     
     # 手机推送数据
     c = mem.conn.execute("""
-        SELECT source, title, timestamp FROM browse_log
+        SELECT source, title, url, timestamp FROM browse_log
         ORDER BY timestamp DESC LIMIT 15
     """)
     raw = c.fetchall()
@@ -358,7 +393,8 @@ def index():
         notifications.append({
             "app": src,
             "title": r[1][:60] + ("…" if len(r[1]) > 60 else ""),
-            "time": r[2][11:16],
+            "url": r[2] if r[2] else "",
+            "time": r[3][11:16],
             "color": app_colors.get(src, "#5a9eff")
         })
     
@@ -372,56 +408,71 @@ def index():
     now = __import__('datetime').datetime.now()
     current_hour_min = now.hour * 60 + now.minute
     
-    # 时间线数据
+    sched_colors = {
+        "起床": "#ffa500", "早餐": "#87ceeb", "上网学习": "#7eb8ff",
+        "出门散步": "#90ee90", "午餐时间": "#ff7f7f", "下午探索": "#7eb8ff",
+        "摸鱼": "#dda0dd", "晚餐": "#ff7f7f", "晚间娱乐": "#ff69b4",
+        "洗漱": "#87ceeb", "睡前反思": "#7eb8ff", "睡觉": "#6666cc"
+    }
+    
+    # 日程全览（所有时间块）
+    all_slots = []
+    for block in [
+        {"time": "08:00", "label": "起床"},
+        {"time": "09:00", "label": "上网学习"},
+        {"time": "11:00", "label": "出门散步"},
+        {"time": "12:00", "label": "午餐时间"},
+        {"time": "14:00", "label": "下午探索"},
+        {"time": "16:00", "label": "摸鱼"},
+        {"time": "18:00", "label": "晚餐"},
+        {"time": "20:00", "label": "晚间娱乐"},
+        {"time": "22:00", "label": "洗漱"},
+        {"time": "23:00", "label": "睡前反思"},
+        {"time": "00:00", "label": "睡觉"},
+    ]:
+        all_slots.append({
+            "time": block["time"],
+            "label": block["label"],
+            "color": sched_colors.get(block["label"], "#555")
+        })
+    
+    # 已发生的事件（只显示过去的）
     c = mem.conn.execute("""
         SELECT time_slot, label, content, is_event, event_type, token_cost, source_platform
         FROM daily_schedule WHERE date = ? ORDER BY time_slot
     """, (today,))
     raw_schedule = c.fetchall()
-    schedule = []
-    sched_colors = {
-        "起床": "#ffa500", "早餐": "#87ceeb",
-        "上网学习": "#7eb8ff", "出门散步": "#90ee90",
-        "午餐时间": "#ff7f7f", "下午探索": "#7eb8ff",
-        "下午茶/摸鱼": "#dda0dd", "晚餐/刷热搜": "#ff7f7f",
-        "晚间娱乐": "#ff69b4", "洗漱整理": "#87ceeb",
-        "睡前反思": "#7eb8ff", "进入梦乡": "#6666cc"
-    }
+    past_events = []
     current_activity = None
     for r in raw_schedule:
         slot_h, slot_m = map(int, r[0].split(":"))
         slot_min = slot_h * 60 + slot_m
         is_past = slot_min <= current_hour_min
         
-        entry = {
-            "time": r[0],
-            "label": r[1],
-            "content": r[2][:120] if r[2] else "",
-            "is_event": bool(r[3]),
-            "event_type": r[4] or "",
-            "token_cost": r[5] or 0,
-            "color": sched_colors.get(r[1], "#555"),
-            "thoughts": [],
-            "past": is_past
-        }
-        if is_past and r[6]:
-            platform = r[6]
-            c2 = mem.conn.execute("""
-                SELECT source, thought FROM thoughts 
-                WHERE source LIKE ? AND timestamp LIKE ?
-                ORDER BY timestamp DESC LIMIT 3
-            """, ("%" + platform + "%", today + "%"))
-            for thought_row in c2.fetchall():
-                entry["thoughts"].append({
-                    "title": thought_row[0],
-                    "text": thought_row[1]
-                })
-        
-        # 记录当前活动：最近的一个已发生时间块
-        if is_past and slot_min <= current_hour_min:
+        if is_past:
+            entry = {
+                "time": r[0],
+                "label": r[1],
+                "content": r[2][:120] if r[2] else "",
+                "is_event": bool(r[3]),
+                "event_type": r[4] or "",
+                "source_platform": r[6] or "",
+                "color": sched_colors.get(r[1], "#555"),
+                "thoughts": []
+            }
+            if r[6]:
+                c2 = mem.conn.execute("""
+                    SELECT source, thought FROM thoughts 
+                    WHERE source LIKE ? AND timestamp LIKE ?
+                    ORDER BY timestamp DESC LIMIT 3
+                """, ("%" + r[6] + "%", today + "%"))
+                for thought_row in c2.fetchall():
+                    entry["thoughts"].append({
+                        "title": thought_row[0],
+                        "text": thought_row[1]
+                    })
+            past_events.append(entry)
             current_activity = r[1]
-        
-        schedule.append(entry)
     
     # 今日计划
     import json
@@ -432,12 +483,14 @@ def index():
     if row and row[0]:
         try:
             plan_data = json.loads(row[0])
+            plan_names = {"bilibili": "B站", "baidu": "百度", "douyin": "抖音", "zhihu": "知乎"}
             plan_icons = {"bilibili": "🎬", "baidu": "🔍", "douyin": "🎵", "zhihu": "💡"}
             plans = []
             for item in plan_data.get("plan", []):
                 p = item.get("platform", "")
                 plans.append({
                     "platform": p,
+                    "platform_name": plan_names.get(p, p),
                     "reason": item.get("reason", "随便看看"),
                     "icon": plan_icons.get(p, "🌐")
                 })
@@ -461,7 +514,8 @@ def index():
         diaries=diaries,
         stats=stats,
         notifications=notifications,
-        schedule=schedule,
+        all_slots=all_slots,
+        past_events=past_events,
         daily_plan=daily_plan,
         current_activity=current_activity,
         now=now,

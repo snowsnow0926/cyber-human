@@ -24,16 +24,10 @@ class CyberHuman:
 你会浏览网上的内容，每一篇对你来说都是"第一次"。
 请用第一人称表达你真实的想法，就像一个人在写日记。"""
     
-    def think_about(self, content: str) -> str:
+    def think_about(self, content: str) -> tuple:
         messages = [
             {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": f"""我刚刚看到了这个内容，说说你的想法：
-
---- 内容 ---
-{content[:3000]}
---- 内容结束 ---
-
-看完这个，你有什么想说的？用第一人称表达。"""}
+            {"role": "user", "content": "我刚刚看到了这个内容，说说你的想法：\n\n--- 内容 ---\n" + content[:3000] + "\n--- 内容结束 ---\n\n看完这个，你有什么想说的？用第一人称表达。\n最后用一行 [IMPORTANCE:X] 评价这件事对你的影响程度（1=没什么感觉，5=印象深刻）"}
         ]
         
         reply = self.client.chat.completions.create(
@@ -43,7 +37,19 @@ class CyberHuman:
             max_tokens=500
         )
         
-        return reply.choices[0].message.content
+        text = reply.choices[0].message.content
+        
+        importance = 3
+        if "[IMPORTANCE:" in text:
+            try:
+                parts = text.split("[IMPORTANCE:")
+                text = parts[0].strip()
+                imp_str = parts[1].split("]")[0]
+                importance = max(1, min(5, int(imp_str)))
+            except:
+                pass
+        
+        return text, importance
 
     def chat(self, user_input: str, history: list = None) -> str:
         messages = [{"role": "system", "content": self.system_prompt}]

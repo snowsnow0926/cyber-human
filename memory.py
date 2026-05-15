@@ -30,7 +30,8 @@ class Memory:
                 timestamp TEXT NOT NULL,
                 source TEXT,
                 thought TEXT NOT NULL,
-                mood TEXT
+                mood TEXT,
+                importance INTEGER DEFAULT 3
             )
         """)
         
