@@ -32,6 +32,7 @@ def do_browse_and_think(human, browser, memory):
         ("bilibili", "B站热门", None),
         ("bilibili", "B站游戏", "游戏"),
         ("baidu", "百度热搜", None),
+        ("douyin", "抖音热搜", None),
         ("zhihu", "知乎热榜", None),
     ]
     
@@ -45,6 +46,8 @@ def do_browse_and_think(human, browser, memory):
             posts = browser.get_bilibili_search(keyword) if keyword else browser.get_bilibili_hot()
         elif platform == "baidu":
             posts = browser.get_baidu_hot()
+        elif platform == "douyin":
+            posts = browser.get_douyin_hot()
         elif platform == "zhihu":
             posts = browser.get_zhihu_hot()
         else:
@@ -77,7 +80,9 @@ def do_browse_and_think(human, browser, memory):
             thought = human.think_about(content)
             print(f"  💭 {thought[:100]}…")
             
-            memory.remember_thought(thought=thought, source=f"{label} · {title[:30]}")
+            # 把文章简介存入mood字段（展示用），想法全文存入thought
+            article_summary = summary[:100] if summary else title[:60]
+            memory.remember_thought(thought=thought, source=f"{label} · {title[:30]}", mood=article_summary)
             all_thoughts.append(thought)
     
     # 写今日日记

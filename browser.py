@@ -107,6 +107,34 @@ class Browser:
         except Exception as e:
             return [{"title": "知乎抓取失败", "summary": str(e), "url": ""}]
 
+    def get_douyin_hot(self, limit: int = 5) -> list:
+        """获取抖音热搜"""
+        try:
+            resp = requests.get(
+                "https://www.douyin.com/aweme/v1/web/hot/search/list/",
+                headers={
+                    **self.HEADERS,
+                    "Referer": "https://www.douyin.com/",
+                },
+                timeout=10
+            )
+            data = resp.json()
+            items = data.get("data", {}).get("word_list", [])
+            results = []
+            for item in items[:limit]:
+                word = item.get("word", "")
+                hot_value = item.get("hot_value", 0)
+                if word:
+                    results.append({
+                        "title": word,
+                        "summary": f"抖音热搜 · 热度 {hot_value}",
+                        "url": f"https://www.douyin.com/search/{word}",
+                        "stat": f"热度:{hot_value}"
+                    })
+            return results if results else [{"title": "抖音热搜暂无", "summary": "", "url": ""}]
+        except Exception as e:
+            return [{"title": "抖音抓取失败", "summary": str(e), "url": ""}]
+
     def get_xiaohongshu_hot(self, limit: int = 3) -> list:
         """模拟小红书热门内容（简化版）"""
         # 小红书没有公开API，先放个占位

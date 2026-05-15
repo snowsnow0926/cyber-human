@@ -90,6 +90,7 @@ HTML_TEMPLATE = """
         <a href="?tab=browse" class="{{ 'active' if tab == 'browse' else '' }}">🌐 今日浏览</a>
         <a href="?tab=thoughts" class="{{ 'active' if tab == 'thoughts' else '' }}">💭 想法</a>
         <a href="?tab=diary" class="{{ 'active' if tab == 'diary' else '' }}">📝 日记</a>
+        <a href="?tab=phone" class="{{ 'active' if tab == 'phone' else '' }}">📱 手机</a>
         <a href="?tab=stats" class="{{ 'active' if tab == 'stats' else '' }}">📊 统计</a>
         <a href="?tab=chat" class="{{ 'active' if tab == 'chat' else '' }}">💬 聊天</a>
     </div>
@@ -133,6 +134,29 @@ HTML_TEMPLATE = """
         <div class="card"><div class="empty">还没有日记</div></div>
         {% endfor %}
 
+    {% elif tab == "phone" %}
+    <div class="card" style="max-width:380px;margin:0 auto">
+        <h2 style="text-align:center">📱 小雪球的手机</h2>
+        <div style="background:#000;border-radius:20px;padding:16px 12px 24px;
+                    color:#fff;font-size:13px;margin-top:8px">
+            <div style="text-align:center;font-size:11px;color:#555;padding:4px 0 12px">
+                🔋 100% · 📶 5G · {{ time_now[:10] }}
+            </div>
+            {% for n in notifications %}
+            <div style="background:#1c1c1e;border-radius:12px;padding:12px;margin-bottom:8px;
+                        border-left:3px solid {{ n.color }}">
+                <div style="color:#888;font-size:11px">{{ n.app }}</div>
+                <div style="color:#fff;margin:4px 0;font-size:13px">{{ n.title }}</div>
+                <div style="color:#aaa;font-size:11px">{{ n.time }}</div>
+            </div>
+            {% else %}
+            <div style="text-align:center;padding:40px 0;color:#555">
+                📱 小雪球的手机还没收到任何推送
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
     {% elif tab == "stats" %}
     <div class="card">
         <h2>📊 数据统计</h2>
@@ -174,7 +198,7 @@ HTML_TEMPLATE = """
         <h2>💭 全部想法</h2>
         {% for t in thoughts_all %}
         <div class="entry">
-            <div class="source">{{ t[2] }}</div>            <div class="title" style="font-size:12px;color:#aaa;margin:2px 0 6px 0">{{ t[3][:80] }}…</div>            <div class="thought">{{ t[3] }}</div>
+            <div class="source">{{ t[2] }}</div>
             <div class="thought">{{ t[3] }}</div>
             <div class="time">{{ t[1][:16] }}</div>
         </div>
@@ -248,6 +272,27 @@ def index():
     dc = mem.conn.execute("SELECT COUNT(*) FROM diary").fetchone()[0]
     sc = mem.conn.execute("SELECT COUNT(DISTINCT source) FROM browse_log").fetchone()[0]
     
+    # 手机推送数据
+    c = mem.conn.execute("""
+        SELECT source, title, timestamp FROM browse_log
+        ORDER BY timestamp DESC LIMIT 15
+    """)
+    raw = c.fetchall()
+    app_colors = {
+        "B站热门": "#fb7299", "B站游戏": "#fb7299",
+        "百度热搜": "#4e6ef2", "抖音热搜": "#00d4b2",
+        "知乎热榜": "#0066ff"
+    }
+    notifications = []
+    for r in raw:
+        src = r[0]
+        notifications.append({
+            "app": src,
+            "title": r[1][:60] + ("…" if len(r[1]) > 60 else ""),
+            "time": r[2][11:16],
+            "color": app_colors.get(src, "#5a9eff")
+        })
+    
     stats = {
         "browse": bc, "thoughts": tc,
         "diaries": dc, "sources": sc,
@@ -256,6 +301,8 @@ def index():
     
     mem.close()
     
+    today = __import__('datetime').date.today().isoformat()
+    
     return render_template_string(HTML_TEMPLATE,
         tab=tab,
         browse=browse,
@@ -263,6 +310,8 @@ def index():
         thoughts_all=thoughts_all,
         diaries=diaries,
         stats=stats,
+        notifications=notifications,
+        time_now=today,
         birthday="2026-05-15"
     )
 
@@ -272,7 +321,7 @@ def chat_api():
     data = request.get_json()
     msg = data.get("message", "")
     
-    human = CyberHuman(name="小雪球")
+    human = CyberHuman(name="小蓝")
     mem = Memory()
     
     recent = mem.get_recent_thoughts(3)
