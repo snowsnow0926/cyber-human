@@ -194,6 +194,25 @@ HTML_TEMPLATE = """
     </div>
     {% endif %}
 
+    {% elif tab == "knowledge" %}
+    <div class="card">
+        <h2>&#x1F4DA; 小雪球的知识库</h2>
+        {% for k in knowledges %}
+        <div class="entry">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+                <span class="source">{{ k[4] }}</span>
+                <span style="font-size:11px;color:#888">
+                    理解度: {% for i in range(k[6]) %}&#x1F9E0;{% endfor %}{% for i in range(5-k[6]) %}&#x1F90D;{% endfor %}
+                </span>
+            </div>
+            <div class="thought">{{ k[3][:120] }}</div>
+            <div class="time" style="font-size:11px">{{ k[1][:16] }} &#xB7; 复习{{ k[7] }}次</div>
+        </div>
+        {% else %}
+        <div class="empty">还没有学到知识 &#x1F4D6;</div>
+        {% endfor %}
+    </div>
+
     {% elif tab == "diary" %}
         {% for d in diaries %}
         <div class="card">
@@ -292,6 +311,25 @@ HTML_TEMPLATE = """
                 <div class="stat-num">{{ memory_stats.nights_consolidated }}</div>
                 <div class="stat-label">夜间巩固</div>
             </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>&#x1F4DA; 知识体系</h2>
+        <div class="stat-grid">
+            <div class="stat-item">
+                <div class="stat-num">{{ kstats.total }}</div>
+                <div class="stat-label">学到的知识</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-num">{{ kstats.forgotten }}</div>
+                <div class="stat-label">已遗忘</div>
+            </div>
+        </div>
+        <div style="margin-top:12px;font-size:13px;color:#888;line-height:1.8">
+            {% for cat, cnt in kstats.categories.items() %}
+            <span style="display:inline-block;background:#2a2a3a;padding:2px 8px;border-radius:8px;margin:2px">{{ cat }}: {{ cnt }}条</span>
+            {% endfor %}
         </div>
     </div>
 
@@ -427,6 +465,11 @@ def index():
             "color": app_colors.get(src, "#5a9eff")
         })
     
+    from knowledge import KnowledgeSystem
+    ks = KnowledgeSystem(mem)
+    kstats = ks.get_stats()
+    knowledges = ks.get_all_knowledge(limit=30)
+
     stats = {
         "browse": bc, "thoughts": tc,
         "diaries": dc, "sources": sc,
@@ -548,6 +591,8 @@ def index():
         thoughts_all=thoughts_all,
         diaries=diaries,
         stats=stats,
+        kstats=kstats,
+        knowledges=knowledges,
         memory_stats=memory_stats,
         notifications=notifications,
         all_slots=all_slots,

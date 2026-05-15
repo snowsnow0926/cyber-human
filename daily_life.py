@@ -7,6 +7,7 @@ import random
 from datetime import datetime, date
 from memory_core import MemoryCore
 from character import should_be_interested, get_interest_weight
+from knowledge import KnowledgeSystem
 
 # Playwright 浏览器增强（可选）
 try:
@@ -59,6 +60,7 @@ class DailyLife:
         self._playwright_available = HAS_PLAYWRIGHT
         self.total_tokens = 0
         self.memory_core = MemoryCore(memory)
+        self.knowledge = KnowledgeSystem(memory)
     
     def run_full_day(self):
         print("\n 的一天开始了......")
@@ -293,6 +295,19 @@ class DailyLife:
                 "UPDATE thoughts SET importance = ? WHERE id = (SELECT MAX(id) FROM thoughts)",
                 (importance,)
             )
+            # 知识提取（方向三 - 学习系统）
+            content_for_knowledge = "[%s] %s\n%s" % (label_name, title, summary)
+            if stat:
+                content_for_knowledge += "\n" + stat
+            k = self.knowledge.extract_from_content(content_for_knowledge, label_name, thought)
+            if k["has_knowledge"]:
+                self.knowledge.save_knowledge(
+                    concept=k["concept"],
+                    explanation=k["explanation"],
+                    category=k["category"],
+                    source=label_name + " - " + title[:30]
+                )
+                self._log("学到新知识: " + k["category"] + " - " + k["concept"][:40])
             self.memory.conn.commit()
             
             total_cost += 100
