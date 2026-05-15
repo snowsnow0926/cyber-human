@@ -7,6 +7,13 @@ import random
 from datetime import datetime, date
 from memory_core import MemoryCore
 
+# Playwright 浏览器增强（可选）
+try:
+    from browser_bot import BrowserBot
+    HAS_PLAYWRIGHT = True
+except:
+    HAS_PLAYWRIGHT = False
+
 
 class DailyLife:
     """赛博人类的日常生活管理器"""
@@ -48,6 +55,7 @@ class DailyLife:
         self.browser = browser
         self.today = date.today().isoformat()
         self.events = []
+        self._playwright_available = HAS_PLAYWRIGHT
         self.total_tokens = 0
         self.memory_core = MemoryCore(memory)
     
@@ -128,6 +136,22 @@ class DailyLife:
         except:
             return "在%s的时候遇到了一点小事......" % label, 50
     
+    def _fetch_bilibili_enhanced(self, limit=3):
+        """B站增强获取：有Playwright用浏览器，没有就用API"""
+        if self._playwright_available:
+            try:
+                self._log("B站增强版: 使用Playwright浏览器")
+                with BrowserBot(headless=True) as bot:
+                    data = bot.get_bilibili_hot_data(limit=limit)
+                    if data and len(data) >= limit//2:
+                        self._log("Playwright获取到 %d 条B站数据" % len(data))
+                        return data
+            except Exception as e:
+                self._log("Playwright B站失败，回退到API: " + str(e))
+        
+        self._log("B站回退: 使用API")
+        return self.browser.get_bilibili_hot(limit=limit)
+    
     def _do_browse_block(self, block):
         label = block["label"]
         time_slot = block["time"]
@@ -143,7 +167,7 @@ class DailyLife:
         platform, label_name = random.choice(sources)
         
         fetchers = {
-            "bilibili": lambda: self.browser.get_bilibili_hot(limit=3),
+            "bilibili": lambda: self._fetch_bilibili_enhanced(limit=3),
             "baidu": lambda: self.browser.get_baidu_hot(limit=3),
             "douyin": lambda: self.browser.get_douyin_hot(limit=3),
             "zhihu": lambda: self.browser.get_zhihu_hot(limit=3),
