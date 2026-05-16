@@ -1,357 +1,469 @@
-#!/usr/bin/env python3
 """
 日常生活模拟引擎
-12 时段日程规划，驱动每日模拟循环
+v0.7 核心逻辑 + v1.0 接口适配
 """
 
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field
-from datetime import date, datetime, time
+from datetime import datetime, date
 from typing import Any, Optional
 
 from logger import get_logger
-from memory import BrowseRecord, Database, Thought, TokenUsage, get_db
-from browser import BrowseResult, HTTPBrowser, get_browser
-from browser_bot import BrowserBot, BotBrowseResult, get_browser_bot
-from knowledge import KnowledgeBase, get_knowledge_base
-from emotion import EmotionSystem, get_emotion_system
-from cyber_human import AIError, CyberHuman, get_ai
+from character import should_be_interested, get_interest_weight
+from memory import BrowseRecord, Thought, DiaryEntry
 
 logger = get_logger(__name__)
 
 
-@dataclass
-class TimeSlot:
-    start_time: str
-    end_time: str
-    activity_type: str
-    label: str
-    description: str
-    interest_keywords: list[str] = field(default_factory=list)
+TIME_BLOCKS = [
+    {"time": "08:00", "label": "起床",         "type": "routine"},
+    {"time": "08:30", "label": "早餐",          "type": "routine"},
+    {"time": "09:00", "label": "上网学习",      "type": "browse"},
+    {"time": "11:00", "label": "出门散步",      "type": "routine"},
+    {"time": "12:00", "label": "午餐时间",      "type": "routine"},
+    {"time": "14:00", "label": "下午探索",      "type": "browse"},
+    {"time": "16:00", "label": "下午茶/摸鱼",   "type": "routine"},
+    {"time": "18:00", "label": "晚餐/刷热搜",   "type": "browse"},
+    {"time": "20:00", "label": "晚间娱乐",      "type": "browse"},
+    {"time": "22:00", "label": "洗漱整理",      "type": "routine"},
+    {"time": "23:00", "label": "睡前反思",      "type": "reflect"},
+    {"time": "00:00", "label": "进入梦乡",      "type": "sleep"},
+]
 
+ROUTINE_TEMPLATES = {
+    "起床": ["打了个哈欠，翻了个身，不想起来", "闹钟响了三遍才醒", "醒来发现嘴角有口水印",
+             "做了个奇怪的梦，但想不起来了", "今天阳光真好，心情不错", "好困……再躺五分钟",
+             "今天不知道为什么特别精神"],
+    "早餐": ["随便吃了点东西", "想了半天不知道吃什么", "早餐凉了，凑合吃"],
+    "出门散步": ["在小区里走了走", "今天天气不错", "路上没什么人",
+               "看到一只鸟在树上叫", "风吹过来凉凉的"],
+    "午餐时间": ["随便吃了点外卖", "今天点了一家新店，一般般",
+               "想了好久才决定吃什么", "午饭比平时晚了一个小时"],
+    "下午茶/摸鱼": ["发了会儿呆", "没什么事干，躺着", "喝了杯水，继续摸鱼",
+                  "有点困，但睡不着"],
+    "洗漱整理": ["洗完澡感觉整个人都清醒了", "刷牙的时候对着镜子发了会儿呆",
+               "今天好累，简单洗洗就睡了", "洗澡的时候突然想到一件白天的事"],
+}
 
-TIME_SLOTS: list[TimeSlot] = [
-    TimeSlot("08:00", "08:30", "wake_up", "起床", "新的一天开始，伸个懒腰迎接阳光", []),
-    TimeSlot("08:30", "09:00", "breakfast", "早餐", "吃一顿丰盛的早餐开启美好一天", ["美食", "早餐", "食谱"]),
-    TimeSlot("09:00", "11:00", "browse", "上网学习", "浏览感兴趣的内容，学习新知识", ["美食", "猫", "游戏", "大学", "无锡"]),
-    TimeSlot("11:00", "12:00", "walk", "出门散步", "走出房间，呼吸新鲜空气", ["风景", "天气"]),
-    TimeSlot("12:00", "14:00", "lunch", "午餐时间", "午餐时光，享受美食", ["美食", "午餐", "食堂"]),
-    TimeSlot("14:00", "16:00", "explore", "下午探索", "下午时光，继续探索感兴趣的内容", ["游戏", "甜品", "美妆"]),
-    TimeSlot("16:00", "18:00", "relax", "下午茶/摸鱼", "休闲放松时光，摸鱼时间到", ["游戏", "视频", "娱乐"]),
-    TimeSlot("18:00", "20:00", "dinner", "晚餐/刷热搜", "晚餐时间，一边吃饭一边刷热搜", ["热搜", "美食", "新闻"]),
-    TimeSlot("20:00", "22:00", "entertainment", "晚间娱乐", "晚间娱乐时光，打游戏或看视频", ["游戏", "电影", "娱乐"]),
-    TimeSlot("22:00", "23:00", "cleanup", "洗漱整理", "洗漱整理，准备休息", []),
-    TimeSlot("23:00", "00:00", "reflection", "睡前反思", "回顾一天，写下日记", []),
-    TimeSlot("00:00", "08:00", "sleep", "进入梦乡", "进入梦乡休息，明天继续探索世界", []),
+# 浏览源配置（源名称, 显示名, 默认权重）
+BROWSE_SOURCES = [
+    ("bilibili", "B站热门", 3),
+    ("baidu", "百度热搜", 2),
+    ("zhihu", "知乎热榜", 2),
+    ("ithome", "IT之家", 1),
+    ("people", "人民网", 1),
+    ("xiaohongshu", "小红书", 2),
 ]
 
 
 class DailyLifeEngine:
-    
-    # 情绪 → 表情映射
-    MOOD_EMOJIS: dict[str, str] = {
-        "好奇": "🤔",
-        "开心": "😊",
-        "困惑": "😕",
-        "害怕": "😨",
-        "伤心": "😢",
-        "生气": "😤",
-        "惊讶": "😲",
-        "平静": "😐",
-    }
+    """日常生活模拟引擎（v0.7 逻辑 + v1.0 接口）"""
 
-    def __init__(
-        self,
-        db: Optional[Database] = None,
-        ai: Optional[CyberHuman] = None,
-        browser: Optional[HTTPBrowser] = None,
-        browser_bot: Optional[BrowserBot] = None,
-        knowledge_base: Optional[KnowledgeBase] = None,
-        emotion_system: Optional[EmotionSystem] = None,
-    ) -> None:
+    def __init__(self, db=None, ai=None, browser=None, kb=None, emotion=None):
+        from memory import get_db
+        from cyber_human import get_ai
+        from browser import get_browser
+        from knowledge import get_knowledge_base
+        from emotion import get_emotion_system
+
         self.db = db or get_db()
         self.ai = ai or get_ai()
         self.browser = browser or get_browser()
-        self.browser_bot = browser_bot or get_browser_bot()
-        self.kb = knowledge_base or get_knowledge_base()
-        from weather import Weather
-        from holiday import Holiday
-        self.weather = Weather()
-        self.holiday = Holiday()
-        self.emotion = emotion_system or get_emotion_system()
-        self.current_slot: Optional[TimeSlot] = None
-        self._sim_date: str = ""  # override for past-day simulation
-        self.schedule: list[dict[str, Any]] = []
-        logger.info("DailyLifeEngine initialized")
+        self.kb = kb or get_knowledge_base()
+        self.emotion = emotion or get_emotion_system()
+        self.events: list[dict] = []
+        self.total_tokens = 0
+        logger.info("DailyLifeEngine initialized (v0.7 merge)")
 
-    def get_time_slot(self) -> TimeSlot:
-        now = datetime.now()
-        for slot in TIME_SLOTS:
-            start_h, start_m = map(int, slot.start_time.split(":"))
-            end_h, end_m = map(int, slot.end_time.split(":"))
-            slot_start = now.replace(hour=start_h, minute=start_m, second=0)
-            slot_end = now.replace(hour=end_h, minute=end_m, second=0)
-            if start_h > end_h:
-                slot_end = slot_end.replace(day=now.day + 1)
-            if start_h <= now.hour < end_h:
-                return slot
-        return TIME_SLOTS[-1]
+    def _today(self, sim_date: str = "") -> str:
+        return sim_date if sim_date else date.today().isoformat()
 
-    def get_interests_for_slot(self, slot: TimeSlot) -> list[str]:
-        if "早餐" in slot.label or "午餐" in slot.label or "晚餐" in slot.label:
-            return ["美食", "食谱", "烹饪", "甜品"]
-        if "娱乐" in slot.label or "摸鱼" in slot.label:
-            return ["游戏", "视频", "娱乐", "热搜"]
-        if "学习" in slot.label or "探索" in slot.label:
-            return ["美食", "猫", "狗", "游戏", "大学", "美妆", "无锡"]
-        return ["热搜", "新闻", "娱乐"]
-
-
-    def get_mood_emoji(self) -> str:
-        """获取小雪球当前的情绪表情"""
+    def _record_tokens(self, tokens: int):
+        if tokens <= 0:
+            return
         try:
-            mood = self.emotion.current.state.value
-            if mood in self.MOOD_EMOJIS:
-                return self.MOOD_EMOJIS[mood]
-            return "😐"
-        except Exception:
-            return "😐"
-
-
-    def _load_continuations(self) -> list[str]:
-        """加载未完成的事件链"""
-        try:
-            from datetime import date
-            today = date.today().isoformat()
-            rows = self.db.get_conn().__enter__().execute(
-                "SELECT continuation FROM daily_schedule WHERE date = ? AND continuation != '' ORDER BY time_slot DESC LIMIT 3",
-                (today,)
-            ).fetchall()
-            return [r[0] for r in rows if r[0]]
-        except:
-            return []
-
-    def _save_continuation(self, text: str) -> None:
-        """保存事件链延续到明天"""
-        try:
-            from datetime import date
-            today = date.today().isoformat()
-            with self.db.get_cursor() as cursor:
-                cursor.execute(
-                    "UPDATE daily_schedule SET continuation = ? WHERE date = ? AND time_slot = (SELECT MAX(time_slot) FROM daily_schedule WHERE date = ?)",
-                    (text, today, today)
+            with self.db.get_conn() as conn:
+                conn.execute(
+                    "INSERT INTO token_usage (timestamp, prompt_tokens, completion_tokens, total_tokens) VALUES (?, 0, 0, ?)",
+                    (datetime.now().isoformat(), tokens),
                 )
         except Exception as e:
-            logger.warning(f"Failed to save continuation: {e}")
+            logger.warning(f"记录token失败: {e}")
 
-    def browse_and_think(
-        self,
-        slot: TimeSlot,
-        max_browses: int = 3,
-    ) -> list[dict[str, Any]]:
-        interests = self.get_interests_for_slot(slot)
-        results: list[dict[str, Any]] = []
-        thought_count = 0
-        total_browsed = 0
+    def _save_slot(self, time_slot: str, activity_type: str, label: str,
+                   content: str, is_event: int = 0, event_type: str = "",
+                   token_cost: int = 0, source_platform: str = "",
+                   sim_date: str = ""):
+        """保存时间块记录到 daily_schedule 表"""
+        today = self._today(sim_date)
+        try:
+            with self.db.get_conn() as conn:
+                conn.execute(
+                    "DELETE FROM daily_schedule WHERE date = ? AND time_slot = ?",
+                    (today, time_slot),
+                )
+                now = datetime.now().isoformat()
+                conn.execute(
+                    """INSERT INTO daily_schedule
+                       (date, time_slot, activity_type, label, content,
+                        is_event, event_type, token_cost, source_platform, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (today, time_slot, activity_type, label, content,
+                     is_event, event_type, token_cost, source_platform, now),
+                )
+        except Exception as e:
+            logger.warning(f"保存slot失败: {e}")
 
-        for _ in range(max_browses):
-            browse_results: list[BrowseResult] = []
+    def _mark_pending(self, time_slot: str, label: str, sim_date: str = ""):
+        """标记时间块为待定"""
+        today = self._today(sim_date)
+        try:
+            with self.db.get_conn() as conn:
+                existing = conn.execute(
+                    "SELECT id FROM daily_schedule WHERE date = ? AND time_slot = ?",
+                    (today, time_slot),
+                ).fetchone()
+                if not existing:
+                    conn.execute(
+                        """INSERT INTO daily_schedule
+                           (date, time_slot, activity_type, label, content, is_event, created_at)
+                           VALUES (?, ?, pending, ?, pending, 0, ?)""",
+                        (today, time_slot, label, datetime.now().isoformat()),
+                    )
+        except Exception as e:
+            logger.warning(f"标记pending失败: {e}")
+
+    def _is_slot_done(self, time_slot: str, sim_date: str = "") -> bool:
+        today = self._today(sim_date)
+        try:
+            with self.db.get_conn() as conn:
+                row = conn.execute(
+                    "SELECT content FROM daily_schedule WHERE date = ? AND time_slot = ?",
+                    (today, time_slot),
+                ).fetchone()
+                return row is not None and row[0] != "pending"
+        except:
+            return False
+
+    def run_full_day(self, sim_date: str = "") -> list[dict]:
+        """
+        运行全天模拟。
+        - sim_date 参数：传了则执行所有 12 个区块
+        - 不传（实时模式）：只执行当前时间 ±1 小时，其余标记 pending
+        """
+        today = self._today(sim_date)
+        logger.info(f"=== 开始全天模拟: {today} (sim={"是" if sim_date else "否"}) ===")
+        print(f"\n🐩 {today} 的一天开始了......")
+        print("=" * 40)
+
+        self.events = []
+        self.total_tokens = 0
+
+        now = datetime.now()
+        current_minutes = now.hour * 60 + now.minute
+
+        for block in TIME_BLOCKS:
+            block_h, block_m = map(int, block["time"].split(":"))
+            block_minutes = block_h * 60 + block_m
+
+            if sim_date:
+                # 模拟模式：执行所有区块
+                result = self._execute_block(block, sim_date)
+                if result:
+                    self.events.append(result)
+            else:
+                # 实时模式：±1 小时内执行，其余 pending
+                diff = abs(block_minutes - current_minutes)
+                if diff <= 60:
+                    result = self._execute_block(block)
+                    if result:
+                        self.events.append(result)
+                elif block_minutes < current_minutes:
+                    already_done = self._is_slot_done(block["time"])
+                    if not already_done:
+                        self._mark_pending(block["time"], block["label"])
+                else:
+                    self._mark_pending(block["time"], block["label"])
+
+        # 如果已经过了 23 点，写日记
+        if current_minutes >= 23 * 60:
+            self._write_diary(sim_date)
+
+        print()
+        print("=" * 40)
+        print(f"🐩 今天执行了 {len(self.events)} 个时间块, 消耗 ~{self.total_tokens} tokens")
+        logger.info(f"全天模拟完成: {len(self.events)} 个区块, {self.total_tokens} tokens")
+        return self.events
+
+    def _execute_block(self, block: dict, sim_date: str = "") -> Optional[dict]:
+        time_slot = block["time"]
+        label = block["label"]
+        block_type = block["type"]
+
+        print(f"\n{time_slot} {label}......")
+
+        if block_type == "sleep":
+            self._save_slot(time_slot, "sleep", label, "zzz......", sim_date=sim_date)
+            return {"time": time_slot, "label": label, "content": "zzz...", "type": "sleep"}
+
+        if block_type == "routine":
+            return self._do_routine_block(block, sim_date)
+        if block_type == "browse":
+            return self._do_browse_block(block, sim_date)
+        if block_type == "reflect":
+            return self._do_reflect_block(block, sim_date)
+
+        return None
+
+    def _do_routine_block(self, block: dict, sim_date: str = "") -> Optional[dict]:
+        label = block["label"]
+        time_slot = block["time"]
+
+        try:
+            roll = random.random()
+
+            if roll < 0.70:
+                # 70% 模板
+                templates = ROUTINE_TEMPLATES.get(label, ["没什么特别的"])
+                content = random.choice(templates)
+                self._save_slot(time_slot, "routine", label, content,
+                                is_event=0, token_cost=0, sim_date=sim_date)
+                print(f"  {content}")
+                return {"time": time_slot, "label": label, "content": content,
+                        "type": "routine", "is_event": False}
+
+            else:
+                # 30% AI 生成小事件
+                content, cost = self._generate_mini_event(label)
+                self._save_slot(time_slot, "routine", label, content,
+                                is_event=1, event_type="small", token_cost=cost,
+                                sim_date=sim_date)
+                print(f"  [事件] {content[:80]}...")
+                self.total_tokens += cost
+                return {"time": time_slot, "label": label, "content": content,
+                        "type": "event", "is_event": True}
+
+        except Exception as e:
+            logger.warning(f"routine块失败: {e}")
+            self._save_slot(time_slot, "routine", label, "今天有点累，不想动..",
+                            sim_date=sim_date)
+            return None
+
+    def _generate_mini_event(self, label: str) -> tuple[str, int]:
+        prompt = f"现在是{label}的时间。发生了一件日常生活里的小事，用第一人称简单说说发生了什么，你是什么感觉。（2-3句话）"
+        try:
+            response = self.ai._call_llm(prompt, system=None)
+            content = response.content
+            cost = response.total_tokens if hasattr(response, total_tokens) else 100
+            self._record_tokens(cost)
+            return content, cost
+        except Exception as e:
+            logger.warning(f"mini事件生成失败: {e}")
+            return f"在{label}的时候遇到了一点小事......", 50
+
+    def _do_browse_block(self, block: dict, sim_date: str = "") -> Optional[dict]:
+        label = block["label"]
+        time_slot = block["time"]
+
+        try:
+            hour = int(time_slot.split(":")[0])
+
+            # 根据时间段调整权重
+            if hour < 12:
+                weights = [3, 1, 1, 1, 1, 1]
+            elif hour < 17:
+                weights = [1, 1, 2, 2, 1, 2]
+            else:
+                weights = [3, 1, 1, 1, 1, 2]
+
+            # 加权随机选择源
+            total_w = sum(weights)
+            r = random.randint(1, total_w)
+            cumulative = 0
+            chosen = BROWSE_SOURCES[0]
+            for i, w in enumerate(weights):
+                cumulative += w
+                if r <= cumulative:
+                    chosen = BROWSE_SOURCES[i]
+                    break
+
+            source_name, display_name = chosen[0], chosen[1]
+
+            # 用 v1.0 browser.fetch 获取内容
             try:
-                browse_results = self.browser.browse_random(interests, max_results=3)
+                browse_results = self.browser.fetch(source_name, timeout=10)
             except Exception as e:
-                logger.warning(f"Browse failed: {e}")
+                logger.warning(f"从 {source_name} 获取失败: {e}")
+                self._save_slot(time_slot, "browse", label,
+                                f"在{display_name}上刷了刷，但没加载出来...",
+                                sim_date=sim_date)
+                return None
 
             if not browse_results:
-                try:
-                    bot_results = self.browser_bot.fetch("weibo")
-                    for br in bot_results:
-                        browse_results.append(
-                            BrowseResult(br.source, br.title, br.summary, br.url, br.category)
-                        )
-                except Exception as e:
-                    logger.warning(f"BrowserBot failed: {e}")
+                self._save_slot(time_slot, "browse", label,
+                                f"在{display_name}上刷了刷，什么都没看到",
+                                sim_date=sim_date)
+                return None
 
-            total_browsed += len(browse_results)
+            results = []
+            total_cost = 0
 
-            for item in browse_results:
+            for br in browse_results[:5]:  # 最多处理5条
+                if not br.title or "失败" in br.title or "暂无" in br.title:
+                    continue
+
+                # ===== 1. 保存浏览记录（所有内容都保存）=====
                 record = BrowseRecord(
                     timestamp=datetime.now().isoformat(),
-                    source=item.source,
-                    title=item.title,
-                    summary=item.summary,
-                    url=item.url,
-                    category=item.category,
+                    source=display_name,
+                    title=br.title,
+                    summary=br.summary or br.title[:60],
+                    url=br.url,
+                    category=br.category,
                 )
                 self.db.add_browse(record)
 
-                try:
-                    thought_text, importance = self.ai.think_about(
-                        f"{item.title}。{item.summary}",
-                        item.source,
-                    )
-                    thought = Thought(
+                # ===== 2. 判断是否感兴趣 =====
+                is_interesting = should_be_interested(br.title, br.summary)
+
+                if is_interesting:
+                    # 感兴趣：AI生成想法（耗token）
+                    try:
+                        thought_text, importance = self.ai.think_about(
+                            content=f"{br.title}。{br.summary}",
+                            source=display_name,
+                        )
+
+                        thought = Thought(
+                            timestamp=datetime.now().isoformat(),
+                            source=f"{display_name} - {br.title[:30]}",
+                            thought=thought_text,
+                            importance=importance,
+                            emotion=self.emotion.current.state.value,
+                        )
+                        self.db.add_thought(thought)
+
+                        # 学习知识
+                        try:
+                            self.kb.learn_from_content(
+                                content=f"{br.title}\n{br.summary}",
+                                title=br.title,
+                                source=display_name,
+                            )
+                        except Exception as e:
+                            logger.debug(f"知识提取失败: {e}")
+
+                        total_cost += 100
+                        results.append({"title": br.title, "thought": thought_text[:100]})
+                    except Exception as e:
+                        logger.warning(f"思考失败: {e}")
+                else:
+                    # 不感兴趣：只记录想法为"不感兴趣"，不调AI（0 token）
+                    self.db.add_thought(Thought(
                         timestamp=datetime.now().isoformat(),
-                        source=item.source,
-                        thought=thought_text,
-                        importance=importance,
+                        source=display_name,
+                        thought=f"看到「{br.title}」，不感兴趣没点开看",
+                        importance=1,
                         emotion=self.emotion.current.state.value,
-                    )
-                    self.db.add_thought(thought)
-                    self.emotion.apply_browse_result(item.title, item.summary)
-                    thought_count += 1
-                    results.append({
-                        "browse": item,
-                        "thought": thought_text,
-                        "importance": importance,
-                    })
-                except AIError as e:
-                    logger.error(f"AI think failed: {e}")
-                except Exception as e:
-                    logger.error(f"Unexpected error in browse_and_think: {e}")
+                    ))
 
-        logger.info(f"browse_and_think: browsed={total_browsed}, thoughts={thought_count}")
-        return results
+            # 生成摘要
+            if results:
+                first_title = results[0]["title"][:30]
+                summary_text = f"在{display_name}看了{len(results)}条内容，最感兴趣的是【{first_title}】"
+            else:
+                summary_text = f"在{display_name}逛了一圈，没找到特别感兴趣的"
 
-    def write_diary(self) -> str:
-        from memory import DiaryEntry
-        today = self._sim_date if self._sim_date else date.today().isoformat()
+            self._save_slot(time_slot, "browse", label, summary_text,
+                            token_cost=total_cost, source_platform=display_name,
+                            sim_date=sim_date)
+            self.total_tokens += total_cost
+
+            print(f"  {display_name}: {len(results)} 条感兴趣")
+            for r in results:
+                print(f"    {r['title'][:40]}")
+
+            return {"time": time_slot, "label": label, "content": summary_text,
+                    "type": "browse", "results": results}
+
+        except Exception as e:
+            logger.warning(f"浏览块失败: {e}")
+            self._save_slot(time_slot, "browse", label,
+                            f"在{label}时信号不太好...",
+                            sim_date=sim_date)
+            return None
+
+    def _do_reflect_block(self, block: dict, sim_date: str = "") -> Optional[dict]:
+        time_slot = block["time"]
+
         try:
-            thoughts = self.db.get_thoughts_by_date(today) if hasattr(self.db, "get_thoughts_by_date") else self.db.get_today_thoughts()
-            browses = self.db.get_browses_by_date(today) if hasattr(self.db, "get_browses_by_date") else self.db.get_today_browses()
-            context = (
-                f"今天共浏览了 {len(browses)} 条内容，"
-                f"产生了 {len(thoughts)} 条想法。"
-            )
-            if thoughts:
-                top = sorted(thoughts, key=lambda t: t["importance"], reverse=True)[:3]
-                context += " 印象最深的是：" + "。".join(
-                    (t.get("thought") or "")[:50] for t in top
-                )
-            prompt = f"""你是「小雪球」，{self.emotion.get_prompt_context()}。
+            prompt = ("天快结束了，回想一下今天发生的事情。用第一人称写一段睡前反思（3-5句话）说说："
+                      "1. 今天最开心的一件事是什么 2. 今天学到或看到什么新东西 3. 有什么想对明天说的")
 
-请根据以下信息，用符合你性格的方式写一篇今日日记：
-{context}
-
-要求：
-1. 自然、真实、情感丰富
-2. 200-300字左右
-3. 结合今天的情绪状态
-4. 可以加入对明天的期待
-"""
             response = self.ai._call_llm(prompt, system=None)
-            diary_text = response.content
-            self.db.add_diary(
-                DiaryEntry(
+            content = response.content
+            cost = response.total_tokens if hasattr(response, total_tokens) else 200
+            self.total_tokens += cost
+            self._record_tokens(cost)
+
+            self._save_slot(time_slot, "reflect", block["label"], content,
+                            token_cost=cost, sim_date=sim_date)
+            print(f"  {content[:100]}...")
+
+            return {"time": time_slot, "label": block["label"], "content": content,
+                    "type": "reflect"}
+
+        except Exception as e:
+            logger.warning(f"反思块失败: {e}")
+            return None
+
+    def _write_diary(self, sim_date: str = ""):
+        """如果今天还没有日记，写一篇"""
+        today = self._today(sim_date)
+        try:
+            # 检查是否已有日记
+            existing = None
+            try:
+                existing = list(filter(lambda d: d.get("date", "") == today, self.db.get_all_diary()))
+            except:
+                pass
+            if existing:
+                logger.info(f"{today} 已有日记，跳过")
+                return
+
+            # 收集事件摘要
+            events_summary = []
+            for e in self.events:
+                if e.get("is_event") or e.get("type") == "reflect":
+                    events_summary.append(f"- {e[label]}: {str(e.get(content, ))[:100]}")
+
+            if not events_summary:
+                return
+
+            diary_text = "今天发生了这些事：\n" + "\n".join(events_summary[:5])
+
+            try:
+                diary = DiaryEntry(
                     date=today,
-                    summary=diary_text,
+                    summary=diary_text[:500],
                     mood=self.emotion.current.state.value,
                 )
-            )
-            logger.info(f"Diary written for {today}: {len(diary_text)} chars")
-            return diary_text
-        except Exception as e:
-            logger.error(f"Failed to write diary: {e}")
-            return ""
-
-    def save_token_usage(
-        self,
-        prompt_tokens: int,
-        completion_tokens: int,
-        total_tokens: int,
-        model: str,
-    ) -> None:
-        try:
-            usage = TokenUsage(
-                timestamp=datetime.now().isoformat(),
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=total_tokens,
-                model=model,
-            )
-            self.db.add_token_usage(usage)
-            self.db.save_emotion(
-                self.emotion.current.state.value,
-                self.emotion.current.intensity,
-                ",".join(self.emotion.current.triggers),
-            )
-        except Exception as e:
-            logger.error(f"Failed to save token usage: {e}")
-
-    def run_slot(self, slot: Optional[TimeSlot] = None) -> dict[str, Any]:
-        slot = slot or self.get_time_slot()
-        self.current_slot = slot
-        self.emotion.step()
-        # Weather/holiday awareness
-        try:
-            weather = self.weather.get_today()
-            weather_mod = self.weather.get_mood_modifier()
-            events = self.holiday.get_today_events()
-            special_days = [e["name"] for e in events if e["type"] != "season"]
-            if special_days:
-                logger.info(f"Today is special: {', '.join(special_days)}")
-            if weather:
-                weather_cond = weather.get("condition", "")
-                logger.info(f"Weather: {weather_cond}, mood modifier: {weather_mod:+.1f}")
-        except Exception as e:
-            logger.debug(f"Weather/holiday check failed: {e}")
-        logger.info(f"Running slot: {slot.label} ({slot.activity_type})")
-
-        result: dict[str, Any] = {
-            "slot": slot.label,
-            "activity_type": slot.activity_type,
-            "thoughts": [],
-            "token_usage": {},
-        }
-
-        if slot.activity_type in ("browse", "explore", "dinner"):
-            browse_results = self.browse_and_think(slot, max_browses=2)
-            result["thoughts"] = browse_results
-
-        elif slot.activity_type == "reflection":
-            from memory import DiaryEntry
-            diary = self.write_diary()
-            result["diary"] = diary
-
-        result["emotion"] = self.emotion.current.to_dict()
-        logger.info(f"Slot '{slot.label}' completed")
-        return result
-
-    def run_full_day(self, sim_date: str = "") -> list[dict[str, Any]]:
-        self._sim_date = sim_date
-        today = sim_date if sim_date else date.today().isoformat()
-        logger.info(f"=== Starting full day simulation: {today} ===")
-        results: list[dict[str, Any]] = []
-        active_slots = [s for s in TIME_SLOTS if s.activity_type not in ("sleep",)]
-        for slot in active_slots:
-            try:
-                res = self.run_slot(slot)
-                results.append(res)
+                self.db.add_diary(diary)
+                print("\n📖 日记已写入")
             except Exception as e:
-                logger.error(f"Slot '{slot.label}' failed: {e}")
-                results.append({"slot": slot.label, "error": str(e)})
-        logger.info(f"=== Full day simulation completed: {len(results)} slots ===")
-        # Save schedule to DB for timeline display
-        try:
-            sched = []
-            for r in results:
-                if r.get("slot"):
-                    sched.append({
-                        "time_slot": r.get("slot", ""),
-                        "activity_type": r.get("activity_type", ""),
-                        "label": r.get("slot", ""),
-                        "content": str(r.get("diary", ""))[:200] if r.get("diary") else "",
-                        "is_event": 0,
-                        "token_cost": r.get("token_usage", {}).get("total_tokens", 0),
-                    })
-            if sched:
-                self.db.save_schedule(today, sched)
+                logger.warning(f"写日记到DB失败: {e}")
+
         except Exception as e:
-            logger.warning(f"Failed to save schedule: {e}")
-        self._sim_date = ""
-        return results
+            logger.warning(f"写日记失败: {e}")
+
+
+# 单例
+_engine: Optional[DailyLifeEngine] = None
 
 
 def get_engine() -> DailyLifeEngine:
-    return DailyLifeEngine()
+    global _engine
+    if _engine is None:
+        _engine = DailyLifeEngine()
+    return _engine
