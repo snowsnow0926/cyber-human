@@ -70,7 +70,17 @@ def api_today_browses() -> Any:
     from memory import get_db
     db = get_db()
     items = db.get_today_browses()
-    return jsonify({"data": items, "total": len(items)})
+    # 去重 + 空摘要补标题
+    seen = set()
+    deduped = []
+    for i in items:
+        t = i.get("title", "")
+        if t not in seen:
+            seen.add(t)
+            if not i.get("summary", "").strip():
+                i["summary"] = t[:60]
+            deduped.append(i)
+    return jsonify({"data": deduped, "total": len(deduped)})
 
 
 @app.route("/api/today/thoughts")
@@ -96,7 +106,92 @@ def api_timeline() -> Any:
         schedule = db.get_today_schedule()
         thoughts = db.get_today_thoughts()
         browses = db.get_today_browses()
+
+    # 按 time_slot 分组
+    slot_map: dict[str, dict[str, Any]] = {}
+    for s in schedule:
+        ts = s.get("time_slot", "00:00")
+        slot_map[ts] = {
+            "time_slot": ts,
+            "label": s.get("label", ""),
+            "activity_type": s.get("activity_type", ""),
+            "content": s.get("content", ""),
+            "is_event": s.get("is_event", 0),
+            "event_type": s.get("event_type", ""),
+            "token_cost": s.get("token_cost", 0),
+            "browses": [],
+            "thoughts": [],
+        }
+
+    # 将浏览记录分配到对应的时间槽
+    browse_slot_order = ["08:00", "09:00", "11:00", "12:00", "14:00", "16:00", "18:00", "20:00", "22:00", "23:00", "00:00"]
+    for b in browses:
+        ts = b.get("timestamp", "")
+        h = ts[11:13] if len(ts) >= 13 else ""
+        assigned = "00:00"
+        for bs in browse_slot_order:
+            if h <= bs[:2]:
+                assigned = bs
+                break
+        if assigned == "00:00" and h > "12":
+            for bs in reversed(browse_slot_order):
+                if h >= bs[:2]:
+                    assigned = bs
+                    break
+        if assigned not in slot_map:
+            slot_map[assigned] = {
+                "time_slot": assigned,
+                "label": "",
+                "activity_type": "browse",
+                "content": "",
+                "is_event": 0,
+                "event_type": "",
+                "token_cost": 0,
+                "browses": [],
+                "thoughts": [],
+            }
+        slot_map[assigned]["browses"].append(b)
+
+    # 将想法分配到对应的时间槽
+    for t in thoughts:
+        ts = t.get("timestamp", "")
+        h = ts[11:13] if len(ts) >= 13 else ""
+        assigned = "00:00"
+        for bs in browse_slot_order:
+            if h <= bs[:2]:
+                assigned = bs
+                break
+        if assigned == "00:00" and h > "12":
+            for bs in reversed(browse_slot_order):
+                if h >= bs[:2]:
+                    assigned = bs
+                    break
+        if assigned not in slot_map:
+            slot_map[assigned] = {
+                "time_slot": assigned,
+                "label": "",
+                "activity_type": "",
+                "content": "",
+                "is_event": 0,
+                "event_type": "",
+                "token_cost": 0,
+                "browses": [],
+                "thoughts": [],
+            }
+        slot_map[assigned]["thoughts"].append(t)
+
+    # 按 time_slot 排序输出
+    groups = []
+    for bs in browse_slot_order:
+        if bs in slot_map:
+            groups.append(slot_map[bs])
+    # 添加不在排序列表中的
+    for ts, g in sorted(slot_map.items()):
+        if g not in groups:
+            groups.append(g)
+
     return jsonify({
+        "groups": groups,
         "schedule": schedule,
         "thoughts": thoughts,
         "browses": browses,

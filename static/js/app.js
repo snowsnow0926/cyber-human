@@ -239,51 +239,107 @@
         var cnt = document.getElementById("timeline-container");
         if (!cnt) return;
 
-        // Schedule summary section
-        var scheduleHtml = "";
-        if (data.schedule && data.schedule.length) {
-            scheduleHtml = '<div class="card" style="margin-bottom:16px;border-left:3px solid #667eea">' +
-                '<div class="card-title" style="font-size:1.1rem">日程安排</div>';
-            data.schedule.forEach(function(s) {
-                var activity = s.activity || s.title || s.description || "活动";
-                var notes = s.notes || "";
-                var energy = s.energy_level ? (" 能量" + s.energy_level) : "";
-                var moodEmoji = s.mood || "";
-                scheduleHtml += '<div style="padding:4px 0;display:flex;align-items:flex-start">' +
-                    '<span style="min-width:55px;font-weight:600;color:#667eea">' + escHtml(s.time_slot || "") + '</span>' +
-                    '<span style="flex:1;font-size:0.9rem">' + moodEmoji + escHtml(activity) + escHtml(energy) +
-                    (notes ? '<br><span style="color:#999;font-size:0.8rem">' + escHtml(notes) + '</span>' : "") +
-                    '</span></div>';
+        // Activity type icons/colors
+        var typeConfig = {
+            "routine": { icon: "📋", color: "#667eea" },
+            "browse":  { icon: "🌐", color: "#43e97b" },
+            "reflect": { icon: "💭", color: "#f093fb" },
+            "sleep":   { icon: "😴", color: "#4facfe" },
+            "pending": { icon: "⏳", color: "#aaa" },
+        };
+
+        var groups = data.groups || [];
+        if (!groups.length) {
+            cnt.innerHTML = '<div class="card"><div class="card-body">暂无活动记录</div></div>';
+            return;
+        }
+
+        var html = groups.map(function(g) {
+            var ts = g.time_slot || "";
+            var label = g.label || "";
+            var atype = g.activity_type || "";
+            var content = g.content || "";
+            var isEvent = g.is_event;
+            var eventType = g.event_type || "";
+            var tc = typeConfig[atype] || { icon: "📌", color: "#999" };
+            var hasBrowses = g.browses && g.browses.length;
+            var hasThoughts = g.thoughts && g.thoughts.length;
+
+            // Slot header
+            var slotHtml = '<div class="timeline-slot" style="margin-bottom:12px;border:1px solid #eee;border-radius:10px;padding:12px;border-left:4px solid ' + tc.color + '">' +
+                '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">' +
+                '<span style="font-size:1.2rem">' + tc.icon + '</span>' +
+                '<span style="font-weight:700;min-width:50px;color:' + tc.color + '">' + escHtml(ts) + '</span>' +
+                '<span style="font-weight:600">' + escHtml(label) + '</span>' +
+                '<span class="tag" style="background:' + tc.color + '20;color:' + tc.color + ';font-size:0.7rem;padding:2px 8px;border-radius:4px">' + escHtml(atype) + '</span>';
+
+            if (isEvent) {
+                slotHtml += '<span class="tag" style="background:#ff6b6b20;color:#ff6b6b;font-size:0.7rem;padding:2px 8px;border-radius:4px">🎲 事件</span>';
+            }
+            slotHtml += '</div>';
+
+            // Content
+            if (content && content != "pending") {
+                slotHtml += '<div style="color:#555;font-size:0.85rem;margin-bottom:8px;padding:8px;background:#f9f9f9;border-radius:6px">' + escHtml(content) + '</div>';
+            } else if (content == "pending") {
+                slotHtml += '<div style="color:#bbb;font-size:0.8rem;font-style:italic;margin-bottom:8px">⏳ 待执行</div>';
+            }
+
+            // Browses within this slot
+            if (hasBrowses) {
+                slotHtml += '<div style="margin-top:6px">';
+                slotHtml += '<div style="font-size:0.75rem;color:#888;margin-bottom:4px">📖 浏览记录 (' + g.browses.length + ')</div>';
+                g.browses.forEach(function(b) {
+                    var title = b.title || "";
+                    var src = b.source || "";
+                    var url = b.url || "";
+                    var linkHtml = url ? '<a href="' + escHtml(url) + '" target="_blank" style="color:#43e97b;text-decoration:none">🔗</a>' : "";
+                    slotHtml += '<div style="font-size:0.8rem;padding:3px 6px;margin:2px 0;background:#f0faf0;border-radius:4px;display:flex;gap:6px">' +
+                        '<span style="color:#666;min-width:40px">[' + escHtml(src) + ']</span>' +
+                        '<span style="flex:1">' + escHtml(title.slice(0, 60)) + '</span>' +
+                        '<span>' + linkHtml + '</span></div>';
+                });
+                slotHtml += '</div>';
+            }
+
+            // Thoughts within this slot
+            if (hasThoughts) {
+                slotHtml += '<div style="margin-top:6px">';
+                slotHtml += '<div style="font-size:0.75rem;color:#888;margin-bottom:4px">💡 想法 (' + g.thoughts.length + ')</div>';
+                g.thoughts.forEach(function(t) {
+                    var thoughtText = (t.thought || "").slice(0, 80);
+                    var imp = t.importance || "";
+                    slotHtml += '<div style="font-size:0.8rem;padding:3px 6px;margin:2px 0;background:#faf0ff;border-radius:4px">' +
+                        escHtml(thoughtText) +
+                        (imp ? ' <span style="color:#f093fb;font-size:0.7rem">[' + imp + '/10]</span>' : '') +
+                        '</div>';
+                });
+                slotHtml += '</div>';
+            }
+
+            slotHtml += '</div>';
+            return slotHtml;
+        }).join("");
+
+        // Also add ungrouped items if any
+        var ungroupedHtml = "";
+        if (data.browses && data.browses.length) {
+            var groupedBrowseCount = 0;
+            (data.groups || []).forEach(function(g) {
+                if (g.browses) groupedBrowseCount += g.browses.length;
             });
-            scheduleHtml += '</div>';
+            if (groupedBrowseCount < data.browses.length) {
+                ungroupedHtml += '<div class="card" style="margin-top:12px"><div class="card-title" style="font-size:0.9rem">📖 其他浏览记录</div>';
+                data.browses.forEach(function(b) {
+                    var title = b.title || "";
+                    var src = b.source || "";
+                    ungroupedHtml += '<div style="font-size:0.8rem;padding:4px;border-bottom:1px solid #f0f0f0">[' + escHtml(src) + '] ' + escHtml(title.slice(0, 80)) + '</div>';
+                });
+                ungroupedHtml += '</div>';
+            }
         }
 
-        // Timeline items
-        var items = [];
-        (data.browses || []).forEach(function(b) {
-            items.push({ time: b.timestamp, type: "browse", title: b.title, source: b.source });
-        });
-        (data.thoughts || []).forEach(function(t) {
-            items.push({ time: t.timestamp, type: "thought", title: (t.thought||"").slice(0, 80), source: t.source });
-        });
-        items.sort(function(a,b) { return new Date(a.time) - new Date(b.time); });
-
-        var itemsHtml = "";
-        if (!items.length) {
-            itemsHtml = '<div class="card"><div class="card-body">暂无活动记录</div></div>';
-        } else {
-            itemsHtml = '<div class="card"><div class="card-title" style="font-size:1.0rem">活动时间线</div>' +
-                items.map(function(item) {
-                    return '<div class="timeline-item ' + item.type + '">' +
-                        '<div class="timeline-dot"></div>' +
-                        '<div class="timeline-content">' +
-                        '<div class="timeline-time">' + formatTime(item.time) + ' &middot; ' + escHtml(item.source) + '</div>' +
-                        '<div class="card-body">' + escHtml(item.title) + '</div>' +
-                        '</div></div>';
-                }).join("") + '</div>';
-        }
-
-        cnt.innerHTML = scheduleHtml + itemsHtml;
+        cnt.innerHTML = html + ungroupedHtml;
     }
 
     async function loadPhone() {

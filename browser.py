@@ -117,25 +117,29 @@ class HTTPBrowser:
         except Exception as e:
             logger.warning(f"Failed to parse bilibili response: {e}")
             return []
-
     def _parse_baidu(self, resp, source):
         try:
             soup = BeautifulSoup(resp.text, "html.parser")
-            items = soup.select(".c-single-text-ellipsis")[:10]
-            return [
-                BrowseResult(
+            items = soup.select(".category-wrap_iQLoo")[:10]
+            results = []
+            for item in items:
+                title_el = item.select_one(".c-single-text-ellipsis")
+                desc_el = item.select_one(".hot-desc_1m_jR")
+                if not title_el:
+                    continue
+                title = title_el.get_text(strip=True)
+                desc = desc_el.get_text(strip=True)[:100] if desc_el else title[:60]
+                results.append(BrowseResult(
                     source="百度热搜",
-                    title=item.get_text(strip=True),
-                    summary="",
+                    title=title,
+                    summary=desc,
                     url="https://top.baidu.com",
                     category="综合",
-                )
-                for item in items
-            ]
+                ))
+            return results if results else []
         except Exception as e:
             logger.warning(f"Failed to parse baidu response: {e}")
             return []
-
     def _parse_zhihu(self, resp, source):
         try:
             data = resp.json().get("data", [])
@@ -156,7 +160,7 @@ class HTTPBrowser:
 
     def _parse_rss(self, resp, source):
         try:
-            soup = BeautifulSoup(resp.text, "xml")
+            soup = BeautifulSoup(resp.text, "lxml-xml")
             items = soup.find_all("item")[:10]
             source_name = "IT之家" if "ithome" in resp.url else "人民网"
             return [
@@ -228,11 +232,6 @@ class HTTPBrowser:
             if len(results) >= max_results:
                 break
             items = self.fetch(src)
-            if interests:
-                items = [
-                    it for it in items
-                    if any(kw in it.title for kw in interests)
-                ]
             results.extend(items[:2])
         return results[:max_results]
 

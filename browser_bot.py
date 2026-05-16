@@ -93,7 +93,7 @@ class BrowserBot:
                     )
                 )
                 page = context.new_page()
-                page.goto(cfg["url"], wait_until="networkidle", timeout=15000)
+                page.goto(cfg["url"], wait_until="domcontentloaded", timeout=30000)
                 elements = page.query_selector_all(cfg["selector"])
                 results: list[BotBrowseResult] = []
                 for el in elements[:10]:

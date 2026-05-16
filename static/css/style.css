@@ -246,6 +246,23 @@ h2 {
     margin-bottom: 4px;
 }
 
+/* ── Timeline Slot (grouped view) ─────────────────────────── */
+.timeline-slot {
+    margin-bottom: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
+    transition: box-shadow 0.2s;
+}
+
+.timeline-slot:hover {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+
+[data-theme="dark"] .timeline-slot:hover {
+    box-shadow: 0 2px 8px rgba(255,255,255,0.06);
+}
+
 /* ── Phone Frame ──────────────────────────────────────────── */
 .phone-frame {
     max-width: 320px;

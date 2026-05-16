@@ -89,3 +89,39 @@ def get_profile() -> CharacterProfile:
         _default_profile = CharacterProfile()
         logger.info("CharacterProfile loaded: 小雪球")
     return _default_profile
+
+
+def should_be_interested(title: str, summary: str = "") -> bool:
+    """判断小雪球是否对内容感兴趣（v0.7 兼容接口）"""
+    profile = get_profile()
+    text = (title + " " + summary).lower()
+    # 优先检查不感兴趣
+    for kw in profile.disinterests:
+        if kw.lower() in text:
+            return False
+    # 检查感兴趣
+    for kw in profile.interests:
+        if kw.lower() in text:
+            return True
+    # 检查 personality_traits 中的关键词
+    text_combined = title + " " + summary
+    for trait in profile.personality_traits:
+        for kw in trait.split():
+            if kw.lower() in text_combined.lower() and len(kw) > 1:
+                return True
+    return False
+
+
+def get_interest_weight(title: str) -> int:
+    """计算兴趣权重（v0.7 兼容接口）"""
+    profile = get_profile()
+    text = title.lower()
+    weight = 0
+    for kw in profile.interests:
+        if kw.lower() in text:
+            weight += 2
+    for kw in profile.personality_traits:
+        for word in kw.split():
+            if word.lower() in text and len(word) > 1:
+                weight += 1
+    return weight
