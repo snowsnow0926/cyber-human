@@ -106,12 +106,12 @@ def _build_chat_prompt(
     history: list[dict[str, str]],
     profile: AIProfile = PROFILE,
 ) -> str:
-        history_lines = ""
-        for msg in history[-6:]:
-            role = "小雪球" if msg["role"] == "assistant" else "你"
-            history_lines += f"{role}：{msg['content']}\n"
+    history_lines = ""
+    for msg in history[-6:]:
+        role = "小雪球" if msg["role"] == "assistant" else "你"
+        history_lines += f"{role}：{msg['content']}\n"
 
-        return f"""你现在是「{profile.name}」，{emotion_ctx}。
+    return f"""你现在是「{profile.name}」，{emotion_ctx}。
 
 你们的对话历史：
 {history_lines or "[无历史记录]"}

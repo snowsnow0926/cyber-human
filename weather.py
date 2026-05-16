@@ -1,5 +1,20 @@
 """赛博人类天气模块"""
-import requests, random
+from __future__ import annotations
+
+import random
+from typing import Optional
+
+import requests
+
+try:
+    from logger import get_logger
+    _logger = get_logger(__name__)
+except ImportError:
+    _logger = None
+
+def _log(level: str, msg: str) -> None:
+    if _logger:
+        getattr(_logger, level.lower())(msg)
 
 class Weather:
     """获取无锡天气（小雪球在江南大学）"""
@@ -47,5 +62,10 @@ class Weather:
         return 0
 
 if __name__ == "__main__":
+    import sys
     w = Weather()
-    print(w.get_today())
+    result = w.get_today()
+    if _logger:
+        _logger.info(f"今日天气: {result}")
+    else:
+        sys.stdout.write(str(result) + "\n")

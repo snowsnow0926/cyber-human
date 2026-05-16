@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 import time
 from datetime import datetime
@@ -73,16 +74,16 @@ def run_full_day() -> None:
 
 def run_single_slot(slot_label: str) -> None:
     engine = get_engine()
-    from daily_life import TIME_SLOTS
-    target = next((s for s in TIME_SLOTS if s.label == slot_label), None)
+    from daily_life import TIME_BLOCKS
+    target = next((s for s in TIME_BLOCKS if s["label"] == slot_label), None)
     if not target:
         logger.error(f"未找到时段: {slot_label}")
-        available = ", ".join(s.label for s in TIME_SLOTS)
+        available = ", ".join(s["label"] for s in TIME_BLOCKS)
         logger.error(f"可用时段: {available}")
         sys.exit(1)
-    logger.info(f"运行单个时段: {target.label}")
+    logger.info(f"运行单个时段: {target['label']}")
     try:
-        result = engine.run_slot(target)
+        result = engine._execute_block(target)
         logger.info(f"时段完成: {result}")
     except Exception as e:
         logger.error(f"时段运行出错: {e}", exc_info=True)
@@ -93,7 +94,11 @@ def run_chat_mode() -> None:
     from cyber_human import get_ai
     ai = get_ai()
     logger.info("进入交互式对话模式（输入 exit 或 quit 退出）")
-    print("\n=== 赛博人类 · 小雪球 ===")
+    # 确保 logger 的 console handler 输出 INFO 级别（chat 模式需要）
+    for h in logger.handlers:
+        if isinstance(h, logging.StreamHandler) and h.stream == sys.stdout:
+            h.setLevel(logging.INFO)
+    print("\n=== 赛博人类 \xb7 小雪球 ===")
     print("你好呀！我是小雪球~有什么想聊的吗？\n")
     history: list[dict[str, str]] = []
     while True:

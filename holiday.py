@@ -1,5 +1,14 @@
 """赛博人类节假日模块"""
-from datetime import date, timedelta
+from __future__ import annotations
+
+from datetime import date
+
+try:
+    from logger import get_logger
+    _logger = get_logger(__name__)
+except ImportError:
+    _logger = None
+
 
 class Holiday:
     """识别节假日和纪念日"""
@@ -65,4 +74,9 @@ class Holiday:
 
 if __name__ == "__main__":
     h = Holiday()
-    print(h.get_today_events())
+    events = h.get_today_events()
+    if _logger:
+        _logger.info(f"今日节假日: {events}")
+    else:
+        import sys
+        print(events, file=sys.stdout)

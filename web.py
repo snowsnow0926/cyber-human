@@ -15,6 +15,23 @@ from functools import wraps
 from threading import Thread
 from typing import Any, Callable, Optional
 
+# 修复 Flask-SocketIO 与 Flask 3.1+ 的兼容性问题（ctx.session 只读）
+import flask_socketio as _fso
+import inspect as _ins
+_sfp = _ins.getsourcefile(_fso)
+with open(_sfp, encoding="utf-8") as _f:
+    _sl = _f.readlines()
+for _i, _l in enumerate(_sl):
+    if "ctx.session = session_obj" in _l and _l.strip().startswith("#"):
+        break
+else:
+    for _i, _l in enumerate(_sl):
+        if "ctx.session = session_obj" in _l:
+            _sl[_i] = "                # ctx.session is read-only in Flask 3.1+\n"
+            with open(_sfp, "w", encoding="utf-8") as _f:
+                _f.writelines(_sl)
+            break
+
 from flask import (
     Flask,
     jsonify,
@@ -98,10 +115,33 @@ def api_timeline() -> Any:
     from memory import get_db
     db = get_db()
     req_date = request.args.get("date", "").strip()
+    target_date = req_date
+
+    # Fallback: if no data exists for the requested date, use the most recent date with data
     if req_date:
         schedule = db.get_schedule_by_date(req_date)
         thoughts = db.get_thoughts_by_date(req_date)
         browses = db.get_browses_by_date(req_date)
+        if not schedule and not thoughts and not browses:
+            # No data for this date — find the most recent date that has data
+            try:
+                with db.get_cursor() as cursor:
+                    rows = cursor.execute("""
+                        SELECT date FROM (
+                            SELECT date FROM daily_schedule
+                            UNION
+                            SELECT DISTINCT substr(timestamp, 1, 10) as date FROM browse_log
+                            UNION
+                            SELECT DISTINCT substr(timestamp, 1, 10) as date FROM thoughts
+                        ) ORDER BY date DESC LIMIT 1
+                    """).fetchall()
+                    if rows:
+                        target_date = rows[0][0]
+                        schedule = db.get_schedule_by_date(target_date)
+                        thoughts = db.get_thoughts_by_date(target_date)
+                        browses = db.get_browses_by_date(target_date)
+            except Exception as e:
+                logger.warning(f"Timeline fallback failed: {e}")
     else:
         schedule = db.get_today_schedule()
         thoughts = db.get_today_thoughts()
@@ -123,21 +163,22 @@ def api_timeline() -> Any:
             "thoughts": [],
         }
 
-    # 将浏览记录分配到对应的时间槽
+    # 排序时间槽（小时数值升序）；注意 "00:00"（午夜）排在最后以便正确处理跨天情况
     browse_slot_order = ["08:00", "09:00", "11:00", "12:00", "14:00", "16:00", "18:00", "20:00", "22:00", "23:00", "00:00"]
+
+    def _assign_slot(h: str) -> str:
+        """将小时字符串分配到最近的时间槽。小时 00 属于 00:00 槽。"""
+        if h == "00":
+            return "00:00"
+        for bs in browse_slot_order[:-1]:  # 跳过末尾的 "00:00"
+            if h <= bs[:2]:
+                return bs
+        return "00:00"
+
     for b in browses:
         ts = b.get("timestamp", "")
         h = ts[11:13] if len(ts) >= 13 else ""
-        assigned = "00:00"
-        for bs in browse_slot_order:
-            if h <= bs[:2]:
-                assigned = bs
-                break
-        if assigned == "00:00" and h > "12":
-            for bs in reversed(browse_slot_order):
-                if h >= bs[:2]:
-                    assigned = bs
-                    break
+        assigned = _assign_slot(h)
         if assigned not in slot_map:
             slot_map[assigned] = {
                 "time_slot": assigned,
@@ -156,16 +197,7 @@ def api_timeline() -> Any:
     for t in thoughts:
         ts = t.get("timestamp", "")
         h = ts[11:13] if len(ts) >= 13 else ""
-        assigned = "00:00"
-        for bs in browse_slot_order:
-            if h <= bs[:2]:
-                assigned = bs
-                break
-        if assigned == "00:00" and h > "12":
-            for bs in reversed(browse_slot_order):
-                if h >= bs[:2]:
-                    assigned = bs
-                    break
+        assigned = _assign_slot(h)
         if assigned not in slot_map:
             slot_map[assigned] = {
                 "time_slot": assigned,
@@ -195,6 +227,7 @@ def api_timeline() -> Any:
         "schedule": schedule,
         "thoughts": thoughts,
         "browses": browses,
+        "shown_date": target_date,
     })
 
 

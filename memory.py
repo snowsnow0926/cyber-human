@@ -7,6 +7,7 @@ SQLite 持久化存储，支持浏览记录、想法、日记等
 from __future__ import annotations
 
 import sqlite3
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, date
@@ -63,10 +64,10 @@ class TokenUsage:
 
 class Database:
     _instance: Optional["Database"] = None
+    _local = threading.local()
 
     def __init__(self, db_path: Optional[Path] = None) -> None:
         self.db_path: Path = db_path or config.DB_PATH
-        self._conn: Optional[sqlite3.Connection] = None
         logger.info(f"Database instance created: {self.db_path}")
 
     @classmethod
@@ -77,18 +78,25 @@ class Database:
 
     @contextmanager
     def get_conn(self) -> Generator[sqlite3.Connection, None, None]:
-        if self._conn is None:
-            self._conn = sqlite3.connect(
+        thread_id = threading.get_ident()
+        conn = getattr(self._local, "conn", None)
+
+        if conn is None or thread_id != getattr(self._local, "thread_id", None):
+            conn = sqlite3.connect(
                 str(self.db_path),
                 check_same_thread=False,
                 detect_types=sqlite3.PARSE_DECLTYPES,
             )
-            self._conn.row_factory = sqlite3.Row
-            self._ensure_tables()
-            logger.debug(f"DB connection opened: {self.db_path}")
+            conn.row_factory = sqlite3.Row
+            self._local.conn = conn
+            self._local.thread_id = thread_id
+            logger.debug(f"DB connection opened for thread {thread_id}: {self.db_path}")
+
+        # Always run migrations on every connection to ensure all threads see schema changes
+        self._ensure_tables(conn)
 
         try:
-            yield self._conn
+            yield conn
         except sqlite3.Error as e:
             logger.error(f"Database error: {e}")
             raise
@@ -105,84 +113,123 @@ class Database:
                 logger.error(f"Transaction error: {e}")
                 raise
 
-    def _ensure_tables(self) -> None:
-        with self.get_conn() as conn:
-            cursor = conn.cursor()
-            cursor.executescript("""
-                CREATE TABLE IF NOT EXISTS browse_log (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp TEXT NOT NULL,
-                    source TEXT,
-                    title TEXT,
-                    summary TEXT,
-                    url TEXT,
-                    category TEXT DEFAULT ''
-                );
-                CREATE TABLE IF NOT EXISTS thoughts (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp TEXT NOT NULL,
-                    source TEXT,
-                    thought TEXT,
-                    mood TEXT DEFAULT '',
-                    importance INTEGER DEFAULT 5,
-                    memory_tier TEXT DEFAULT 'short',
-                    emotion TEXT DEFAULT '',
-                    recall_count INTEGER DEFAULT 0
-                );
-                CREATE TABLE IF NOT EXISTS diary (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    date TEXT UNIQUE NOT NULL,
-                    summary TEXT,
-                    mood TEXT DEFAULT ''
-                );
-                CREATE TABLE IF NOT EXISTS token_usage (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp TEXT NOT NULL,
-                    prompt_tokens INTEGER DEFAULT 0,
-                    completion_tokens INTEGER DEFAULT 0,
-                    total_tokens INTEGER DEFAULT 0,
-                    model TEXT DEFAULT ''
-                );
-                CREATE TABLE IF NOT EXISTS daily_schedule (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    date TEXT NOT NULL,
-                    time_slot TEXT,
-                    activity_type TEXT,
-                    label TEXT,
-                    content TEXT,
-                    is_event INTEGER DEFAULT 0,
-                    token_cost REAL DEFAULT 0.0
-                );
-                CREATE TABLE IF NOT EXISTS knowledge (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp TEXT NOT NULL,
-                    concept TEXT,
-                    explanation TEXT,
-                    category TEXT DEFAULT '',
-                    confidence INTEGER DEFAULT 1,
-                    review_count INTEGER DEFAULT 0,
-                    last_reviewed TEXT DEFAULT ''
-                );
-                CREATE TABLE IF NOT EXISTS memory_consolidation (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    date TEXT UNIQUE NOT NULL,
-                    promoted_to_mid INTEGER DEFAULT 0,
-                    promoted_to_long INTEGER DEFAULT 0,
-                    forgotten INTEGER DEFAULT 0
-                );
-                CREATE TABLE IF NOT EXISTS emotions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp TEXT NOT NULL,
-                    state TEXT,
-                    intensity REAL DEFAULT 0.5,
-                    triggers TEXT DEFAULT ''
-                );
-                CREATE INDEX IF NOT EXISTS idx_browse_timestamp ON browse_log(timestamp);
-                CREATE INDEX IF NOT EXISTS idx_thoughts_timestamp ON thoughts(timestamp);
-                CREATE INDEX IF NOT EXISTS idx_thoughts_tier ON thoughts(memory_tier);
-                CREATE INDEX IF NOT EXISTS idx_knowledge_category ON knowledge(category);
-            """)
-            logger.debug("Database tables ensured")
+    def _ensure_tables(self, conn: sqlite3.Connection) -> None:
+        cursor = conn.cursor()
+        cursor.executescript("""
+            CREATE TABLE IF NOT EXISTS browse_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                source TEXT,
+                title TEXT,
+                summary TEXT,
+                url TEXT,
+                category TEXT DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS thoughts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                source TEXT,
+                thought TEXT,
+                mood TEXT DEFAULT '',
+                importance INTEGER DEFAULT 5,
+                memory_tier TEXT DEFAULT 'short',
+                emotion TEXT DEFAULT '',
+                recall_count INTEGER DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS diary (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT UNIQUE NOT NULL,
+                summary TEXT,
+                mood TEXT DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS token_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                prompt_tokens INTEGER DEFAULT 0,
+                completion_tokens INTEGER DEFAULT 0,
+                total_tokens INTEGER DEFAULT 0,
+                model TEXT DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS daily_schedule (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                time_slot TEXT,
+                activity_type TEXT,
+                label TEXT,
+                content TEXT,
+                is_event INTEGER DEFAULT 0,
+                token_cost REAL DEFAULT 0.0
+            );
+            CREATE TABLE IF NOT EXISTS knowledge (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                concept TEXT,
+                explanation TEXT,
+                category TEXT DEFAULT '',
+                confidence INTEGER DEFAULT 1,
+                review_count INTEGER DEFAULT 0,
+                last_reviewed TEXT DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS memory_consolidation (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT UNIQUE NOT NULL,
+                promoted_to_mid INTEGER DEFAULT 0,
+                promoted_to_long INTEGER DEFAULT 0,
+                forgotten INTEGER DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS emotions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                state TEXT,
+                intensity REAL DEFAULT 0.5,
+                triggers TEXT DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_browse_timestamp ON browse_log(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_thoughts_timestamp ON thoughts(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_thoughts_tier ON thoughts(memory_tier);
+            CREATE INDEX IF NOT EXISTS idx_knowledge_category ON knowledge(category);
+        """)
+        # 数据库迁移：添加可能缺失的列
+        cursor.execute("PRAGMA table_info(browse_log)")
+        cols = {row[1] for row in cursor.fetchall()}
+        for col, coltype in [("category", "TEXT DEFAULT ''")]:
+            if col not in cols:
+                cursor.execute(f"ALTER TABLE browse_log ADD COLUMN {col} {coltype}")
+                logger.info(f"Added missing column: browse_log.{col}")
+        cursor.execute("PRAGMA table_info(thoughts)")
+        cols = {row[1] for row in cursor.fetchall()}
+        for col, coltype in [("emotion", "TEXT DEFAULT ''")]:
+            if col not in cols:
+                cursor.execute(f"ALTER TABLE thoughts ADD COLUMN {col} {coltype}")
+                logger.info(f"Added missing column: thoughts.{col}")
+        cursor.execute("PRAGMA table_info(diary)")
+        cols = {row[1] for row in cursor.fetchall()}
+        if "mood" not in cols:
+            cursor.execute("ALTER TABLE diary ADD COLUMN mood TEXT DEFAULT ''")
+            logger.info("Added missing column: diary.mood")
+        # daily_schedule 迁移：补充缺失列
+        cursor.execute("PRAGMA table_info(daily_schedule)")
+        cols = {row[1] for row in cursor.fetchall()}
+        for col, coltype in [
+            ("event_type", "TEXT DEFAULT ''"),
+            ("source_platform", "TEXT DEFAULT ''"),
+            ("created_at", "TEXT DEFAULT ''"),
+        ]:
+            if col not in cols:
+                cursor.execute(f"ALTER TABLE daily_schedule ADD COLUMN {col} {coltype}")
+                logger.info(f"Added missing column: daily_schedule.{col}")
+        # thoughts 迁移：补充缺失列
+        cursor.execute("PRAGMA table_info(thoughts)")
+        cols = {row[1] for row in cursor.fetchall()}
+        for col, coltype in [
+            ("mood", "TEXT DEFAULT ''"),
+            ("memory_tier", "TEXT DEFAULT 'short'"),
+            ("recall_count", "INTEGER DEFAULT 0"),
+        ]:
+            if col not in cols:
+                cursor.execute(f"ALTER TABLE thoughts ADD COLUMN {col} {coltype}")
+                logger.info(f"Added missing column: thoughts.{col}")
+        logger.debug("Database tables ensured")
 
     def add_browse(self, record: BrowseRecord) -> int:
         with self.get_cursor() as cursor:
@@ -450,9 +497,9 @@ class Database:
             logger.error(f"Failed to save schedule: {e}")
 
     def close(self) -> None:
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        if hasattr(self._local, "conn") and self._local.conn:
+            self._local.conn.close()
+            self._local.conn = None
             logger.debug("DB connection closed")
 
 

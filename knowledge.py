@@ -103,9 +103,11 @@ class KnowledgeBase:
         content: str,
         title: str,
         source: str,
+        timestamp: Optional[str] = None,
     ) -> int:
         items = self.extractor.extract(f"标题：{title}\n内容：{content}")
         saved = 0
+        ts = timestamp or datetime.now().isoformat()
         for item in items:
             try:
                 with self.db.get_cursor() as cursor:
@@ -113,7 +115,7 @@ class KnowledgeBase:
                         """INSERT INTO knowledge
                            (timestamp, concept, explanation, category, confidence)
                            VALUES (?, ?, ?, ?, ?)""",
-                        (datetime.now().isoformat(), item.concept,
+                        (ts, item.concept,
                          item.explanation, item.category, item.confidence),
                     )
                     saved += 1

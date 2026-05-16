@@ -74,10 +74,15 @@ class DailyLifeEngine:
         self.emotion = emotion or get_emotion_system()
         self.events: list[dict] = []
         self.total_tokens = 0
+        self._is_simulating = False
+        self._block_index = 0
+        self._sim_date: str = ""
         logger.info("DailyLifeEngine initialized (v0.7 merge)")
 
     def _today(self, sim_date: str = "") -> str:
-        return sim_date if sim_date else date.today().isoformat()
+        if sim_date and sim_date != "today":
+            return sim_date
+        return date.today().isoformat()
 
     def _record_tokens(self, tokens: int):
         if tokens <= 0:
@@ -152,56 +157,42 @@ class DailyLifeEngine:
         - sim_date 参数：传了则执行所有 12 个区块
         - 不传（实时模式）：只执行当前时间 ±1 小时，其余标记 pending
         """
+        # 标准化日期参数：空字符串或 "today" 都转为今天日期
+        if not sim_date or sim_date == "today":
+            sim_date = date.today().isoformat()
+        self._sim_date = sim_date
         today = self._today(sim_date)
-        logger.info(f"=== 开始全天模拟: {today} (sim={"是" if sim_date else "否"}) ===")
-        print(f"\n🐩 {today} 的一天开始了......")
-        print("=" * 40)
+        # _is_simulating: 始终为 True，确保日记在模拟结束时生成
+        # （实时模式走 cron 定时，模拟模式走 run_full_day）
+        self._is_simulating = True
+        logger.info(f"=== 开始全天模拟: {today} ===")
+        logger.warning(f">>> {today} 的一天开始了......")
+        logger.warning("=" * 40)
 
         self.events = []
         self.total_tokens = 0
+        self._block_index = 0
 
-        now = datetime.now()
-        current_minutes = now.hour * 60 + now.minute
-
+        # 模拟模式：执行所有区块（实时模式走 cron 定时，模拟模式走这里）
         for block in TIME_BLOCKS:
-            block_h, block_m = map(int, block["time"].split(":"))
-            block_minutes = block_h * 60 + block_m
+            result = self._execute_block(block, sim_date)
+            if result:
+                self.events.append(result)
 
-            if sim_date:
-                # 模拟模式：执行所有区块
-                result = self._execute_block(block, sim_date)
-                if result:
-                    self.events.append(result)
-            else:
-                # 实时模式：±1 小时内执行，其余 pending
-                diff = abs(block_minutes - current_minutes)
-                if diff <= 60:
-                    result = self._execute_block(block)
-                    if result:
-                        self.events.append(result)
-                elif block_minutes < current_minutes:
-                    already_done = self._is_slot_done(block["time"])
-                    if not already_done:
-                        self._mark_pending(block["time"], block["label"])
-                else:
-                    self._mark_pending(block["time"], block["label"])
+        # 模拟结束，写日记（_is_simulating 为 True 时才写）
+        self._write_diary(sim_date)
 
-        # 如果已经过了 23 点，写日记
-        if current_minutes >= 23 * 60:
-            self._write_diary(sim_date)
-
-        print()
-        print("=" * 40)
-        print(f"🐩 今天执行了 {len(self.events)} 个时间块, 消耗 ~{self.total_tokens} tokens")
-        logger.info(f"全天模拟完成: {len(self.events)} 个区块, {self.total_tokens} tokens")
+        logger.warning("=" * 40)
+        logger.info(f">>> 今天执行了 {len(self.events)} 个时间块, 消耗 ~{self.total_tokens} tokens")
         return self.events
 
     def _execute_block(self, block: dict, sim_date: str = "") -> Optional[dict]:
         time_slot = block["time"]
         label = block["label"]
         block_type = block["type"]
+        self._block_index += 1
 
-        print(f"\n{time_slot} {label}......")
+        logger.info(f"[{self._block_index}/12] {time_slot} {label}......")
 
         if block_type == "sleep":
             self._save_slot(time_slot, "sleep", label, "zzz......", sim_date=sim_date)
@@ -229,7 +220,7 @@ class DailyLifeEngine:
                 content = random.choice(templates)
                 self._save_slot(time_slot, "routine", label, content,
                                 is_event=0, token_cost=0, sim_date=sim_date)
-                print(f"  {content}")
+                logger.debug(f"  模板事件: {content}")
                 return {"time": time_slot, "label": label, "content": content,
                         "type": "routine", "is_event": False}
 
@@ -239,7 +230,7 @@ class DailyLifeEngine:
                 self._save_slot(time_slot, "routine", label, content,
                                 is_event=1, event_type="small", token_cost=cost,
                                 sim_date=sim_date)
-                print(f"  [事件] {content[:80]}...")
+                logger.info(f"  [AI事件] {content[:80]}...")
                 self.total_tokens += cost
                 return {"time": time_slot, "label": label, "content": content,
                         "type": "event", "is_event": True}
@@ -255,7 +246,7 @@ class DailyLifeEngine:
         try:
             response = self.ai._call_llm(prompt, system=None)
             content = response.content
-            cost = response.total_tokens if hasattr(response, total_tokens) else 100
+            cost = response.total_tokens if hasattr(response, 'total_tokens') else 100
             self._record_tokens(cost)
             return content, cost
         except Exception as e:
@@ -308,14 +299,25 @@ class DailyLifeEngine:
 
             results = []
             total_cost = 0
+            seen_titles: set[str] = set()
 
             for br in browse_results[:5]:  # 最多处理5条
                 if not br.title or "失败" in br.title or "暂无" in br.title:
                     continue
+                # 同一区块内去重（避免多个源返回相同内容）
+                title_key = br.title[:60]
+                if title_key in seen_titles:
+                    continue
+                seen_titles.add(title_key)
 
-                # ===== 1. 保存浏览记录（所有内容都保存）=====
+                # ===== 1. 保存浏览记录（模拟模式下使用该区块的时间戳）=====
+                if self._is_simulating:
+                    h, m = map(int, time_slot.split(":"))
+                    ts = f"{sim_date}T{time_slot}:00.000"
+                else:
+                    ts = datetime.now().isoformat()
                 record = BrowseRecord(
-                    timestamp=datetime.now().isoformat(),
+                    timestamp=ts,
                     source=display_name,
                     title=br.title,
                     summary=br.summary or br.title[:60],
@@ -334,39 +336,40 @@ class DailyLifeEngine:
                             content=f"{br.title}。{br.summary}",
                             source=display_name,
                         )
-
+                        thought_ts = ts  # 与浏览记录时间戳一致
                         thought = Thought(
-                            timestamp=datetime.now().isoformat(),
+                            timestamp=thought_ts,
                             source=f"{display_name} - {br.title[:30]}",
                             thought=thought_text,
                             importance=importance,
                             emotion=self.emotion.current.state.value,
                         )
                         self.db.add_thought(thought)
-
-                        # 学习知识
-                        try:
-                            self.kb.learn_from_content(
-                                content=f"{br.title}\n{br.summary}",
-                                title=br.title,
-                                source=display_name,
-                            )
-                        except Exception as e:
-                            logger.debug(f"知识提取失败: {e}")
-
                         total_cost += 100
                         results.append({"title": br.title, "thought": thought_text[:100]})
                     except Exception as e:
                         logger.warning(f"思考失败: {e}")
                 else:
                     # 不感兴趣：只记录想法为"不感兴趣"，不调AI（0 token）
+                    thought_ts = ts
                     self.db.add_thought(Thought(
-                        timestamp=datetime.now().isoformat(),
+                        timestamp=thought_ts,
                         source=display_name,
                         thought=f"看到「{br.title}」，不感兴趣没点开看",
                         importance=1,
                         emotion=self.emotion.current.state.value,
                     ))
+
+                # 知识提取：所有内容都尝试提取，不受兴趣判断影响
+                try:
+                    self.kb.learn_from_content(
+                        content=f"{br.title}\n{br.summary}",
+                        title=br.title,
+                        source=display_name,
+                        timestamp=ts,  # 使用区块时间戳
+                    )
+                except Exception as e:
+                    logger.debug(f"知识提取失败: {e}")
 
             # 生成摘要
             if results:
@@ -380,9 +383,9 @@ class DailyLifeEngine:
                             sim_date=sim_date)
             self.total_tokens += total_cost
 
-            print(f"  {display_name}: {len(results)} 条感兴趣")
+            logger.info(f"  {display_name}: {len(results)} 条感兴趣")
             for r in results:
-                print(f"    {r['title'][:40]}")
+                logger.debug(f"    {r['title'][:40]}")
 
             return {"time": time_slot, "label": label, "content": summary_text,
                     "type": "browse", "results": results}
@@ -398,18 +401,24 @@ class DailyLifeEngine:
         time_slot = block["time"]
 
         try:
+            # 生成模拟时间戳（使用区块时间，而非实时时间）
+            if self._is_simulating:
+                ts = f"{self._sim_date}T{time_slot}:00.000"
+            else:
+                ts = datetime.now().isoformat()
+
             prompt = ("天快结束了，回想一下今天发生的事情。用第一人称写一段睡前反思（3-5句话）说说："
                       "1. 今天最开心的一件事是什么 2. 今天学到或看到什么新东西 3. 有什么想对明天说的")
 
             response = self.ai._call_llm(prompt, system=None)
             content = response.content
-            cost = response.total_tokens if hasattr(response, total_tokens) else 200
+            cost = response.total_tokens if hasattr(response, 'total_tokens') else 200
             self.total_tokens += cost
             self._record_tokens(cost)
 
             self._save_slot(time_slot, "reflect", block["label"], content,
                             token_cost=cost, sim_date=sim_date)
-            print(f"  {content[:100]}...")
+            logger.info(f"  反思: {content[:100]}...")
 
             return {"time": time_slot, "label": block["label"], "content": content,
                     "type": "reflect"}
@@ -436,7 +445,7 @@ class DailyLifeEngine:
             events_summary = []
             for e in self.events:
                 if e.get("is_event") or e.get("type") == "reflect":
-                    events_summary.append(f"- {e[label]}: {str(e.get(content, ))[:100]}")
+                    events_summary.append(f"- {e.get('label', '')}: {str(e.get('content', ''))[:100]}")
 
             if not events_summary:
                 return
@@ -450,7 +459,7 @@ class DailyLifeEngine:
                     mood=self.emotion.current.state.value,
                 )
                 self.db.add_diary(diary)
-                print("\n📖 日记已写入")
+                logger.info(f"日记已写入: {today}")
             except Exception as e:
                 logger.warning(f"写日记到DB失败: {e}")
 

@@ -96,7 +96,7 @@
     }
 
     async function loadBrowses() {
-        const data = await api("/cyber-human/api/today/browses");
+        const data = await api("/api/today/browses");
         const el = $("#browse-list");
         if (!el) return;
         if (!data.data.length) {
@@ -113,7 +113,7 @@
     }
 
     async function loadThoughts() {
-        const data = await api("/cyber-human/api/today/thoughts");
+        const data = await api("/api/today/thoughts");
         const el = $("#thoughts-list");
         if (!el) return;
         if (!data.data.length) {
@@ -137,7 +137,7 @@
     }
 
     async function loadDiary() {
-        const data = await api("/cyber-human/api/diary");
+        const data = await api("/api/diary");
         const el = $("#diary-list");
         if (!el) return;
         if (!data.data.length) {
@@ -153,7 +153,7 @@
     }
 
     async function loadStats() {
-        const data = await api("/cyber-human/api/stats");
+        const data = await api("/api/stats");
         const tokens = data.total_tokens || 0;
         const cost = (tokens * 0.000001).toFixed(4);
         var todayTokens = data.today_tokens || 0;
@@ -199,7 +199,7 @@
     }
 
     async function loadKnowledge() {
-        const data = await api("/cyber-human/api/knowledge");
+        const data = await api("/api/knowledge");
         const el = $("#knowledge-list");
         if (!el) return;
         if (!data.data.length) {
@@ -227,7 +227,7 @@
             var now = new Date();
             dateStr = now.getFullYear() + "-" + String(now.getMonth()+1).padStart(2,"0") + "-" + String(now.getDate()).padStart(2,"0");
         }
-        var url = "/cyber-human/api/timeline?date=" + encodeURIComponent(dateStr);
+        var url = "/api/timeline?date=" + encodeURIComponent(dateStr);
         var data = {};
         try {
             data = await api(url);
@@ -238,6 +238,20 @@
         }
         var cnt = document.getElementById("timeline-container");
         if (!cnt) return;
+
+        // Show notice if date was auto-corrected
+        if (data.shown_date && data.shown_date !== dateStr) {
+            var noticeEl = document.getElementById("timeline-notice");
+            if (noticeEl) noticeEl.remove();
+            var notice = document.createElement("div");
+            notice.id = "timeline-notice";
+            notice.style.cssText = "background:#fff3cd;color:#856404;padding:8px 12px;border-radius:6px;font-size:0.8rem;margin-bottom:12px";
+            notice.textContent = "⚠️ " + dateStr + " 无活动记录，已自动切换到最近有数据的日期: " + data.shown_date;
+            cnt.parentNode.insertBefore(notice, cnt);
+        } else {
+            var noticeEl = document.getElementById("timeline-notice");
+            if (noticeEl) noticeEl.remove();
+        }
 
         // Activity type icons/colors
         var typeConfig = {
@@ -345,7 +359,7 @@
     async function loadPhone() {
         var data;
         try {
-            data = await api("/cyber-human/api/notifications");
+            data = await api("/api/notifications");
         } catch(e) {
             var el = document.getElementById("phone-content");
             if (el) el.innerHTML = '<p class="phone-placeholder">加载失败</p>';
@@ -419,7 +433,7 @@
 
     // -- Profile tab --
     async function loadProfile() {
-        const data = await api("/cyber-human/api/profile");
+        const data = await api("/api/profile");
         const el = $("#profile-content");
         if (!el) return;
         const traits = (data.traits || []).map(function(t) {
@@ -466,7 +480,7 @@
         if (!el) return;
         el.innerHTML = '<div class="loading">\u641c\u7d22\u4e2d...</div>';
         try {
-            const data = await api("/cyber-human/api/search?q=" + encodeURIComponent(query));
+            const data = await api("/api/search?q=" + encodeURIComponent(query));
             if (!data.data.length) {
                 el.innerHTML = '<div class="card"><div class="card-body">\u6ca1\u6709\u627e\u5230\u7ed3\u679c</div></div>';
                 return;
@@ -495,7 +509,7 @@
         addChatMsg("user", text);
         state.chatHistory.push({ role: "user", content: text });
         try {
-            const resp = await api("/cyber-human/api/chat", {
+            const resp = await api("/api/chat", {
                 method: "POST",
                 body: JSON.stringify({ message: text, history: state.chatHistory }),
             });
@@ -527,7 +541,7 @@
             var body = simDate ? JSON.stringify({date: simDate}) : undefined;
             var opts = { method: "POST", headers: {"Content-Type": "application/json"} };
             if (body) opts.body = body;
-            var r = await api("/cyber-human/api/control/simulate_day", opts);
+            var r = await api("/api/control/simulate_day", opts);
             logControl(label + "模拟已启动（" + (r.date || "today") + "），进度可在各页面查看", "success");
         } catch (e) {
             logControl("启动失败: " + e.message, "error");
@@ -538,7 +552,7 @@
         if (!confirm("确定清除今日浏览记录？")) return;
         logControl("正在清除...");
         try {
-            var r = await api("/cyber-human/api/control/clear_browses", { method: "POST" });
+            var r = await api("/api/control/clear_browses", { method: "POST" });
             logControl("已清除 " + (r.cleared || 0) + " 条记录", "success");
             loadTabData("browse");
         } catch (e) {
@@ -550,7 +564,7 @@
         if (!confirm("确定要清空所有数据吗？此操作不可撤销！")) return;
         logControl("正在清空所有数据...");
         try {
-            var r = await api("/cyber-human/api/control/clear_data", { method: "POST" });
+            var r = await api("/api/control/clear_data", { method: "POST" });
             logControl("已清空：" + JSON.stringify(r.cleared || r), "success");
             loadTabData(state.currentTab);
         } catch (e) {
@@ -577,7 +591,7 @@
     // ── 写日记 ───────────────────────────────────────────────
     $("#write-diary-btn")?.addEventListener("click", async () => {
         try {
-            await api("/cyber-human/api/diary/today", { method: "POST" });
+            await api("/api/diary/today", { method: "POST" });
             logControl("日记已生成", "success");
             await loadDiary();
         } catch (e) {
@@ -688,7 +702,7 @@
     }
 
     async function init() {
-        await api("/cyber-human/api/emotion").then((data) => {
+        await api("/api/emotion").then((data) => {
             const badge = $("#emotion-badge");
             if (badge && data.current) badge.textContent = data.current.emoji;
         }).catch(() => {});
