@@ -1,215 +1,241 @@
-"""
-赛博人类 - 上网模块
+#!/usr/bin/env python3
+"""browser.py - 赛博人类浏览器模块 (HTTP API)"""
 
-负责从各个网站获取内容。
-使用公开 API 获取热门内容和搜索结果。
-"""
+from __future__ import annotations
+
+import random
+import re
+from dataclasses import dataclass
+from typing import Any, Optional
 
 import requests
-import feedparser
-import json
-import json
-import re
+from bs4 import BeautifulSoup
 
-class Browser:
-    """
-    赛博人类的"眼睛"——用来在网上获取信息。
-    """
-    
-    HEADERS = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+from logger import get_logger
+
+logger = get_logger(__name__)
+
+requests_session = requests.Session()
+requests_session.headers.update({
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/html, application/xml",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+})
+
+
+@dataclass
+class BrowseResult:
+    source: str
+    title: str
+    summary: str
+    url: str
+    category: str
+
+
+class HTTPBrowser:
+    """通过 HTTP API 抓取内容的浏览器"""
+
+    SOURCE_CONFIGS = {
+        "bilibili": {
+            "url": "https://api.bilibili.com/x/web-interface/ranking/v2?rid=0&type=all",
+            "method": "json",
+            "parser": "_parse_bilibili",
+        },
+        "baidu": {
+            "url": "https://top.baidu.com/board?tab=realtime",
+            "method": "html",
+            "parser": "_parse_baidu",
+        },
+        "zhihu": {
+            "url": "https://www.zhihu.com/api/v4/columns/recommend/items?limit=10&offset=0",
+            "method": "json",
+            "parser": "_parse_zhihu",
+        },
+        "ithome": {
+            "url": "https://www.ithome.com/rss/",
+            "method": "rss",
+            "parser": "_parse_rss",
+        },
+        "people": {
+            "url": "http://www.people.com.cn/rss/opml.xml",
+            "method": "rss",
+            "parser": "_parse_rss",
+        },
+        "xiaohongshu": {
+            "url": "https://www.xiaohongshu.com/explore",
+            "method": "html",
+            "parser": "_parse_xiaohongshu",
+        },
     }
-    
-    
-    def _cached_get(self, key, ttl=300):
-        """从缓存取数据，5分钟内不重复请求"""
-        import time
-        if key in self.cache:
-            data, ts = self.cache[key]
-            if time.time() - ts < ttl:
-                return data
-        return None
-    
-    def _cache_set(self, key, data):
-        import time
-        self.cache[key] = (data, time.time())
 
-    def get_bilibili_hot(self, limit: int = 5) -> list:
-        """获取B站热门视频"""
-        try:
-            resp = requests.get(
-                "https://api.bilibili.com/x/web-interface/ranking/v2",
-                headers=self.HEADERS, timeout=10
-            )
-            data = resp.json()
-            if data.get("code") == 0:
-                videos = data["data"]["list"][:limit]
-                results = []
-                for v in videos:
-                    results.append({
-                        "title": v.get("title", ""),
-                        "summary": v.get("desc", "")[:200],
-                        "url": f"https://www.bilibili.com/video/{v.get('bvid', '')}",
-                        "stat": f"播放{v.get('stat',{}).get('view','?')} 点赞{v.get('stat',{}).get('like','?')}"
-                    })
-                return results
-            return [{"title": f"B站API返回: {data.get('message', '?')}", "summary": "", "url": ""}]
-        except Exception as e:
-            return [{"title": "B站抓取失败", "summary": str(e), "url": ""}]
-    
-    def get_bilibili_search(self, keyword: str, limit: int = 3) -> list:
-        """去B站搜索"""
-        try:
-            resp = requests.get(
-                f"https://api.bilibili.com/x/web-interface/search/type?search_type=video&keyword={keyword}",
-                headers=self.HEADERS, timeout=10
-            )
-            data = resp.json()
-            if data.get("code") == 0:
-                results = []
-                for v in data.get("data", {}).get("result", [])[:limit]:
-                    results.append({
-                        "title": v.get("title", "").replace("<em>", "").replace("</em>", ""),
-                        "summary": v.get("description", "")[:200],
-                        "url": f"https://www.bilibili.com/video/{v.get('bvid', '')}"
-                    })
-                return results
-            return [{"title": f"B站搜索: {keyword}", "summary": "", "url": ""}]
-        except Exception as e:
-            return [{"title": "B站搜索失败", "summary": str(e), "url": ""}]
-    
-    def get_baidu_hot(self, limit: int = 5) -> list:
-        """获取百度热搜"""
-        try:
-            resp = requests.get(
-                "https://top.baidu.com/board?tab=realtime",
-                headers=self.HEADERS, timeout=10
-            )
-            resp.encoding = "utf-8"
-            # 从页面提取热搜词
-            titles = re.findall(r'"word":"(.*?)"', resp.text)
-            results = []
-            for t in titles[:limit]:
-                results.append({
-                    "title": t,
-                    "summary": f"百度热搜: {t}",
-                    "url": f"https://www.baidu.com/s?wd={t}"
-                })
-            return results if results else [{"title": "百度热搜暂无数据", "summary": "", "url": ""}]
-        except Exception as e:
-            return [{"title": "百度热搜抓取失败", "summary": str(e), "url": ""}]
+    def __init__(self) -> None:
+        self.session = requests_session
+        logger.info("HTTPBrowser initialized")
 
-    def get_zhihu_hot(self, limit: int = 5) -> list:
-        """获取知乎热榜（explore API）"""
-        try:
-            session = requests.Session()
-            session.headers.update(self.HEADERS)
-            resp = session.get(
-                "https://www.zhihu.com/api/v3/explore/guest/feeds?limit=" + str(limit + 3),
-                headers={"Accept": "application/json"},
-                timeout=10
-            )
-            data = resp.json()
-            results = []
-            for item in data.get("data", [])[:limit]:
-                target = item.get("target", {})
-                question = target.get("question", {})
-                title = question.get("title", "") or target.get("excerpt", "")[:80]
-                if title:
-                    api_url = target.get("url", "")
-                    answer_id = api_url.split("/")[-1] if "/" in api_url else ""
-                    qid = question.get("id", "") or target.get("id", "")
-                    if qid and answer_id:
-                        web_url = "https://www.zhihu.com/question/" + str(qid) + "/answer/" + str(answer_id)
-                    else:
-                        web_url = api_url
-                    results.append({
-                        "title": title[:80],
-                        "summary": target.get("excerpt", "")[:200],
-                        "url": web_url,
-                        "stat": "赞同 " + str(target.get("voteup_count", 0))
-                    })
-            return results if results else [{"title": "知乎热榜暂无", "summary": "", "url": ""}]
-        except Exception as e:
-            return [{"title": "知乎抓取失败", "summary": str(e), "url": ""}]
-    
-    def get_douyin_hot(self, limit: int = 5) -> list:
-        """获取抖音热搜"""
-        try:
-            resp = requests.get(
-                "https://www.douyin.com/aweme/v1/web/hot/search/list/",
-                params={"device_platform": "webapp", "aid": "6383"},
-                headers={**self.HEADERS, "Referer": "https://www.douyin.com/", "Accept": "application/json"},
-                timeout=10
-            )
-            data = resp.json()
-            results = []
-            for item in data.get("data", {}).get("word_list", [])[:limit]:
-                word = item.get("word", "")
-                hot_value = item.get("hot_value", "")
-                results.append({
-                    "title": word[:80],
-                    "summary": "",
-                    "url": "https://www.douyin.com/search/" + word,
-                    "stat": str(hot_value) if hot_value else ""
-                })
-            return results if results else [{"title": "抖音暂无", "summary": "", "url": ""}]
-        except Exception as e:
-            return [{"title": "抖音抓取失败", "summary": str(e), "url": ""}]
-    
-    def get_ithome_hot(self, limit: int = 5) -> list:
-        """获取IT之家热文（RSS）"""
-        try:
-            feed = feedparser.parse("https://www.ithome.com/rss/")
-            results = []
-            for entry in feed.entries[:limit]:
-                title = entry.get("title", "")
-                summary = entry.get("summary", "")[:200] if entry.get("summary") else ""
-                url = entry.get("link", "")
-                results.append({"title": title[:80], "summary": summary, "url": url, "stat": ""})
-            return results if results else [{"title": "IT之家暂无", "summary": "", "url": ""}]
-        except Exception as e:
-            return [{"title": "IT之家失败", "summary": str(e), "url": ""}]
-    
-    def get_people_hot(self, limit: int = 5) -> list:
-        """获取人民网要闻（RSS）"""
-        try:
-            feed = feedparser.parse("http://www.people.com.cn/rss/politics.xml")
-            results = []
-            for entry in feed.entries[:limit]:
-                title = entry.get("title", "")
-                summary = entry.get("summary", "")[:200] if entry.get("summary") else ""
-                url = entry.get("link", "")
-                results.append({"title": title[:80], "summary": summary, "url": url, "stat": ""})
-            return results if results else [{"title": "人民网暂无", "summary": "", "url": ""}]
-        except Exception as e:
-            return [{"title": "人民网失败", "summary": str(e), "url": ""}]
+    def fetch(
+        self, source: str, timeout: int = 10
+    ) -> list[BrowseResult]:
+        cfg = self.SOURCE_CONFIGS.get(source)
+        if not cfg:
+            logger.warning(f"Unknown source: {source}")
+            return []
 
-
-    def get_xiaohongshu_hot(self, limit: int = 5) -> list:
-        """获取小红书热搜（简化版，尝试抓取）
-        如果被ban则返回空列表。
-        """
         try:
-            resp = requests.get(
-                "https://www.xiaohongshu.com/explore",
-                headers=self.HEADERS, timeout=10
+            logger.debug(f"Fetching {source}: {cfg['url']}")
+            resp = self.session.get(cfg["url"], timeout=timeout)
+            resp.raise_for_status()
+            parser = getattr(self, cfg["parser"])
+            results = parser(resp, source)
+            logger.info(f"Fetched {len(results)} items from {source}")
+            return results
+        except requests.Timeout:
+            logger.warning(f"Timeout fetching {source}")
+        except requests.HTTPError as e:
+            logger.warning(f"HTTP error fetching {source}: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error fetching {source}: {e}")
+        return []
+
+    def _parse_bilibili(self, resp, source):
+        try:
+            data = resp.json().get("data", {}).get("list", [])
+            return [
+                BrowseResult(
+                    source="B站",
+                    title=item.get("title", ""),
+                    summary=item.get("desc", "")[:200],
+                    url=f"https://www.bilibili.com/video/{item.get('bvid', '')}",
+                    category="娱乐",
+                )
+                for item in data[:10]
+                if item.get("title")
+            ]
+        except Exception as e:
+            logger.warning(f"Failed to parse bilibili response: {e}")
+            return []
+
+    def _parse_baidu(self, resp, source):
+        try:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            items = soup.select(".c-single-text-ellipsis")[:10]
+            return [
+                BrowseResult(
+                    source="百度热搜",
+                    title=item.get_text(strip=True),
+                    summary="",
+                    url="https://top.baidu.com",
+                    category="综合",
+                )
+                for item in items
+            ]
+        except Exception as e:
+            logger.warning(f"Failed to parse baidu response: {e}")
+            return []
+
+    def _parse_zhihu(self, resp, source):
+        try:
+            data = resp.json().get("data", [])
+            return [
+                BrowseResult(
+                    source="知乎",
+                    title=item.get("title", ""),
+                    summary=item.get("intro", "")[:200],
+                    url=item.get("url", ""),
+                    category="知识",
+                )
+                for item in data[:10]
+                if item.get("title")
+            ]
+        except Exception as e:
+            logger.warning(f"Failed to parse zhihu response: {e}")
+            return []
+
+    def _parse_rss(self, resp, source):
+        try:
+            soup = BeautifulSoup(resp.text, "xml")
+            items = soup.find_all("item")[:10]
+            source_name = "IT之家" if "ithome" in resp.url else "人民网"
+            return [
+                BrowseResult(
+                    source=source_name,
+                    title=item.title.get_text(strip=True) if item.title else "",
+                    summary=item.description.get_text(strip=True)[:200]
+                    if item.description else "",
+                    url=item.link.get_text(strip=True) if item.link else "",
+                    category="科技" if source_name == "IT之家" else "新闻",
+                )
+                for item in items
+                if item.title
+            ]
+        except Exception as e:
+            logger.warning(f"Failed to parse RSS response: {e}")
+            return []
+
+    def _parse_xiaohongshu(self, resp, source):
+        """解析小红书探索页，提取标题文本"""
+        try:
+            titles = re.findall(
+                r'<span[^>]*class="[^"]*title[^"]*"[^>]*>(.*?)</span>',
+                resp.text
             )
-            if resp.status_code != 200:
-                return []
-            # 尝试从页面中提取热搜词
-            import re
-            titles = re.findall(r'<span[^>]*class="[^"]*title[^"]*"[^>]*>(.*?)</span>', resp.text)
             results = []
-            for t in titles[:limit]:
+            for t in titles[:10]:
                 clean_t = t.strip()[:80]
                 if clean_t:
-                    results.append({
-                        "title": clean_t,
-                        "summary": "",
-                        "url": f"https://www.xiaohongshu.com/search/result?keyword={clean_t}"
-                    })
-            return results if results else []
+                    results.append(
+                        BrowseResult(
+                            source="小红书",
+                            title=clean_t,
+                            summary="",
+                            url=f"https://www.xiaohongshu.com/search/result?keyword={clean_t}",
+                            category="生活",
+                        )
+                    )
+            if not results:
+                soup = BeautifulSoup(resp.text, "html.parser")
+                for sel in [".note-item .title", "[class*=title]"]:
+                    elements = soup.select(sel)[:10]
+                    if elements:
+                        results = [
+                            BrowseResult(
+                                source="小红书",
+                                title=e.get_text(strip=True)[:80],
+                                summary="",
+                                url="https://www.xiaohongshu.com/explore",
+                                category="生活",
+                            )
+                            for e in elements if e.get_text(strip=True)
+                        ]
+                        break
+            return results
         except Exception as e:
+            logger.warning(f"Failed to parse xiaohongshu response: {e}")
             return []
+
+    def browse_random(
+        self,
+        interests: Optional[list[str]] = None,
+        max_results: int = 5,
+    ) -> list[BrowseResult]:
+        sources = list(self.SOURCE_CONFIGS.keys())
+        random.shuffle(sources)
+        results: list[BrowseResult] = []
+        for src in sources:
+            if len(results) >= max_results:
+                break
+            items = self.fetch(src)
+            if interests:
+                items = [
+                    it for it in items
+                    if any(kw in it.title for kw in interests)
+                ]
+            results.extend(items[:2])
+        return results[:max_results]
+
+
+def get_browser() -> HTTPBrowser:
+    return HTTPBrowser()

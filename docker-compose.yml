@@ -1,0 +1,43 @@
+version: "3.9"
+
+services:
+  cyber-human:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cyber-human
+    restart: unless-stopped
+    ports:
+      - "${FLASK_PORT:-5010}:5010"
+    environment:
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-v4-flash}
+      - DB_PATH=/app/cyber_memory.db
+      - LOG_DIR=/app/logs
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - FLASK_HOST=0.0.0.0
+      - FLASK_PORT=5010
+      - FLASK_DEBUG=false
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.8}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-1024}
+      - LLM_TIMEOUT=${LLM_TIMEOUT:-60}
+    volumes:
+      - cyber_data:/app
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5010/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - cyber-net
+
+volumes:
+  cyber_data:
+    driver: local
+
+networks:
+  cyber-net:
+    driver: bridge

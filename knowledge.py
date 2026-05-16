@@ -1,330 +1,199 @@
+#!/usr/bin/env python3
 """
-赛博人类 - 知识学习系统
-
-小雪球不只是"看完说两句"，而是真正学进去。
-
-核心流程：
-1. 浏览内容 → AI提取知识点（"我学到了..."）
-2. 存入知识库 → 分类、打分
-3. 低谷时段 → 复习旧知识 → 加深理解
-4. 关联 → 发现知识之间的联系
+知识学习模块
+从浏览内容中提取知识要点，按分类存储，支持间隔复习
 """
 
-import json
-import random
-from datetime import datetime, date, timedelta
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Optional
+
+import config
+from logger import get_logger
+from memory import Database, get_db
+
+logger = get_logger(__name__)
+
+CATEGORIES = [
+    "美食烹饪", "食品科学", "大学生活", "可爱动物",
+    "游戏", "美妆穿搭", "生活常识", "人文地理",
+    "科学知识", "娱乐影视", "其他",
+]
 
 
-class KnowledgeSystem:
-    """
-    知识学习系统。
-    
-    模拟一个人的学习过程：
-    - 第一次看到 → 粗糙理解（confidence=1）
-    - 复习一次 → 加深一点（confidence+1）
-    - 能关联到其他知识 → 真的懂了
-    - 长期不复习 → 遗忘
-    """
-    
-    # 知识分类
-    CATEGORIES = [
-        "美食烹饪", "食品科学", "大学生活",
-        "可爱动物", "游戏", "美妆穿搭",
-        "生活常识", "人文地理", "科学知识",
-        "娱乐影视", "其他"
-    ]
-    
-    def __init__(self, memory):
-        self.memory = memory
-        self._create_tables()
-    
-    def _create_tables(self):
-        conn = self.memory.conn
-        conn.execute("""CREATE TABLE IF NOT EXISTS knowledge (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT NOT NULL,
-            concept TEXT NOT NULL,
-            explanation TEXT,
-            category TEXT DEFAULT '其他',
-            source TEXT DEFAULT '',
-            confidence INTEGER DEFAULT 1,
-            review_count INTEGER DEFAULT 0,
-            last_reviewed TEXT,
-            related_ids TEXT DEFAULT '',
-            forgotten INTEGER DEFAULT 0
-        )""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS knowledge_reviews (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            knowledge_id INTEGER,
-            review_date TEXT,
-            understanding TEXT,
-            confidence_before INTEGER,
-            confidence_after INTEGER
-        )""")
-        conn.commit()
-    
-    def extract_from_content(self, content: str, source: str, ai_thought: str) -> dict:
-        """
-        从浏览内容和AI想法中提取知识点。
-        
-        返回：{ "has_knowledge": bool, "concept": str, "explanation": str, "category": str }
-        
-        流程：
-        1. 先用关键词检测（快速判断）
-        2. 如果关键词没命中，用AI语义分析判断是否学到东西
-        """
-        result = {
-            "has_knowledge": False,
-            "concept": "",
-            "explanation": "",
-            "category": "其他"
-        }
-        
-        thought = ai_thought.lower()
-        
-        # === 第一层：关键词检测（原有逻辑，快速） ===
-        learning_indicators = [
-            "学到了", "第一次知道", "原来", "才发现",
-            "了解了", "认识到了", "懂了", "知道了",
-            "记住了", "get到",
-            "竟然", "居然", "哇 ", "好奇",
-            "好有意思", "有趣", "好神奇",
-            "种草了", "马住了",
-        ]
-        
-        has_learning = any(ind in thought for ind in learning_indicators)
-        
-        # === 第二层：AI语义分析（关键词没命中时使用） ===
-        if not has_learning:
-            has_learning = self._ai_check_learning(ai_thought, content)
-        
-        if not has_learning:
-            return result
-        
-        # 尝试从内容中提取知识点
-        lines = content.split("\n")
-        title = lines[0] if lines else ""
-        
-        category = self._guess_category(title + " " + ai_thought)
-        concept = title[:60] if len(title) > 10 else ai_thought[:60]
-        explanation = ai_thought[:200]
-        
-        result["has_knowledge"] = True
-        result["concept"] = concept
-        result["explanation"] = explanation
-        result["category"] = category
-        
-        return result
-    
-    def _ai_check_learning(self, ai_thought: str, content: str) -> bool:
-        """
-        AI语义分析：通过分析AI回复的内容结构，
-        判断它是否在学习/发现新事物。
-        
-        不使用额外API调用，而是分析已有AI回复的语义特征：
-        - 包含解释性句式（"这让我想到"、"原来是这样"）
-        - 包含评价性内容（"很有意思"、"真不错"）
-        - 内容中包含具体知识点描述
-        - 对话式学习（"学到了"的各种变体）
-        """
-        thought_lower = ai_thought.lower()
-        content_lower = content.lower()
-        
-        # 语义分析模式 - 更深层的学习信号
-        semantic_patterns = [
-            # 解释和推理
-            "这是因为", "意思是", "所以", "也就是说",
-            "其实", "本质上", "指的是", "相当于",
-            # 发现和洞察
-            "让我想到", "联想到", "回想起来",
-            "突然发现", "意识到", "明白了",
-            # 知识与事实
-            "是", "就是", "叫做", "被称为",
-            "分为", "包括", "含有", "含有", "组成",
-            # 感受性学习
-            "好厉害", "真厉害", "太棒了", "好棒",
-            "有意思", "好有趣", "好好玩",
-            # 行动意向
-            "下次试试", "我也要", "想试试",
-            "收藏了", "记下来", "码住",
-        ]
-        
-        # 如果内容本身包含信息密度高的句子（非纯情绪表达）
-        info_density = 0
-        for sentence in ai_thought.split("。"):
-            sentence = sentence.strip()
-            if len(sentence) > 15:  # 长句子可能有信息量
-                info_density += 1
-            if "是" in sentence and len(sentence) > 20:  # 定义/判断句
-                info_density += 2
-        
-        # 匹配语义模式
-        matches = sum(1 for pat in semantic_patterns if pat in thought_lower)
-        
-        # 综合判断
-        if matches >= 2:
-            return True
-        if matches >= 1 and info_density >= 3:
-            return True
-        if info_density >= 5:
-            return True
-        
-        return False
-    
-    def _guess_category(self, text: str) -> str:
-        """根据文本猜测知识分类"""
-        text_lower = text.lower()
-        
-        category_keywords = {
-            "美食烹饪": ["美食", "好吃", "烹饪", "做饭", "食谱", "甜品", "蛋糕", "面包",
-                        "咖啡", "奶茶", "零食", "探店", "外卖", "味道", "食材", "菜"],
-            "食品科学": ["营养", "配料表", "食品", "健康饮食", "卡路里", "维生素", "蛋白质",
-                        "添加剂", "保质期", "食品安全"],
-            "可爱动物": ["猫", "狗", "博美", "宠物", "萌宠", "小动物", "狗狗", "猫咪"],
-            "游戏": ["游戏", "steam", "switch", "通关", "攻略", "副本", "角色", "剧情"],
-            "大学生活": ["大学", "宿舍", "开学", "期末", "校园", "上课", "考试", "考研"],
-            "美妆穿搭": ["化妆", "美妆", "护肤", "穿搭", "平价", "口红", "粉底"],
-            "生活常识": ["技巧", "方法", "教程", "省钱", "收纳", "清洁"],
-        }
-        
-        for category, keywords in category_keywords.items():
-            for kw in keywords:
-                if kw in text_lower:
-                    return category
-        
-        return "其他"
-    
-    def save_knowledge(self, concept: str, explanation: str, category: str, source: str):
-        """保存一条新知识"""
-        conn = self.memory.conn
-        now = datetime.now().isoformat()
-        
-        existing = conn.execute(
-            "SELECT id, review_count FROM knowledge WHERE concept = ? AND forgotten = 0",
-            (concept,)
-        ).fetchone()
-        
-        if existing:
-            conn.execute(
-                "UPDATE knowledge SET explanation = ?, review_count = review_count + 1, last_reviewed = ?, confidence = MIN(confidence + 1, 5) WHERE id = ?",
-                (explanation, now, existing[0])
+@dataclass
+class KnowledgeItem:
+    concept: str
+    explanation: str
+    category: str
+    confidence: int = 1
+
+
+class KnowledgeExtractor:
+    SYSTEM_PROMPT = """你是一个知识整理助手。请从以下内容中提取1-3个有价值的知识要点。
+
+要求：
+1. 每个知识要点包含「概念」和「解释」两部分
+2. 判断内容属于哪个分类（美食烹饪/食品科学/大学生活/可爱动物/游戏/美妆穿搭/生活常识/人文地理/科学知识/娱乐影视/其他）
+3. 用JSON数组格式输出：
+[{"concept": "概念名", "explanation": "解释内容", "category": "分类"}]
+4. 如果内容无知识价值，返回空数组 []
+5. 不要输出任何额外内容
+"""
+
+    def __init__(self, client: Any = None) -> None:
+        self._client = client
+
+    def extract(self, content: str) -> list[KnowledgeItem]:
+        try:
+            import openai
+            client = self._client or openai.OpenAI(
+                api_key=config.DEEPSEEK_API_KEY,
+                base_url=config.DEEPSEEK_BASE_URL,
             )
-            return existing[0]
-        
-        conn.execute(
-            "INSERT INTO knowledge (timestamp, concept, explanation, category, source, confidence, last_reviewed) VALUES (?, ?, ?, ?, ?, 1, ?)",
-            (now, concept, explanation, category, source, now)
-        )
-        conn.commit()
-        return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-    
-    def review_random(self, limit=3) -> list:
-        """
-        随机挑选几个知识点来复习。
-        """
-        conn = self.memory.conn
-        now = datetime.now().isoformat()
-        
-        three_days_ago = (datetime.now() - timedelta(days=3)).isoformat()
-        candidates = conn.execute("""
-            SELECT id, concept, explanation, category, confidence, review_count, last_reviewed
-            FROM knowledge
-            WHERE forgotten = 0
-            ORDER BY 
-                CASE WHEN last_reviewed < ? THEN 0 ELSE 1 END,
-                confidence ASC,
-                last_reviewed ASC
-            LIMIT ?
-        """, (three_days_ago, limit)).fetchall()
-        
-        reviewed = []
-        for row in candidates:
-            kid, concept, explanation, category, conf, count, last = row
-            
-            conn.execute(
-                "UPDATE knowledge SET review_count = review_count + 1, last_reviewed = ?, confidence = MIN(confidence + 1, 5) WHERE id = ?",
-                (now, kid)
+            response = client.chat.completions.create(
+                model=config.DEEPSEEK_MODEL,
+                messages=[
+                    {"role": "system", "content": self.SYSTEM_PROMPT},
+                    {"role": "user", "content": content[:2000]},
+                ],
+                temperature=0.3,
+                max_tokens=512,
             )
-            
-            conn.execute(
-                "INSERT INTO knowledge_reviews (knowledge_id, review_date, understanding, confidence_before, confidence_after) VALUES (?, ?, ?, ?, ?)",
-                (kid, date.today().isoformat(), "复习加深", conf, min(conf + 1, 5))
-            )
-            
-            reviewed.append({
-                "id": kid,
-                "concept": concept,
-                "explanation": explanation,
-                "category": category,
-                "confidence": conf,
-                "new_confidence": min(conf + 1, 5)
-            })
-        
-        conn.commit()
-        return reviewed
-    
-    def forget_old(self, days=14):
-        """
-        超过指定天数没复习的旧知识 → 遗忘标记。
-        """
-        conn = self.memory.conn
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
-        
-        forgotten = conn.execute("""
-            SELECT id, concept FROM knowledge
-            WHERE forgotten = 0 AND confidence <= 2 AND last_reviewed < ?
-        """, (cutoff,)).fetchall()
-        
-        for row in forgotten:
-            conn.execute("UPDATE knowledge SET forgotten = 1 WHERE id = ?", (row[0],))
-        
-        conn.commit()
-        return len(forgotten)
-    
-    def get_stats(self) -> dict:
-        """获取知识系统统计"""
-        conn = self.memory.conn
-        total = conn.execute("SELECT COUNT(*) FROM knowledge WHERE forgotten = 0").fetchone()[0]
-        forgotten = conn.execute("SELECT COUNT(*) FROM knowledge WHERE forgotten = 1").fetchone()[0]
-        
-        categories = {}
-        for row in conn.execute("SELECT category, COUNT(*) FROM knowledge WHERE forgotten = 0 GROUP BY category"):
-            categories[row[0]] = row[1]
-        
-        conf_dist = {}
-        for i in range(1, 6):
-            cnt = conn.execute("SELECT COUNT(*) FROM knowledge WHERE forgotten = 0 AND confidence = ?", (i,)).fetchone()[0]
-            if cnt > 0:
-                conf_dist[str(i)] = cnt
-        
-        return {
-            "total": total,
-            "forgotten": forgotten,
-            "categories": categories,
-            "confidence_distribution": conf_dist
-        }
-    
-    def get_all_knowledge(self, limit=50) -> list:
-        """获取所有知识列表"""
-        conn = self.memory.conn
-        rows = conn.execute("""
-            SELECT id, timestamp, concept, explanation, category, source, confidence, review_count, last_reviewed
-            FROM knowledge
-            WHERE forgotten = 0
-            ORDER BY confidence DESC, last_reviewed DESC
-            LIMIT ?
-        """, (limit,)).fetchall()
-        return rows
-    
-    def search_knowledge(self, keyword: str, limit=20) -> list:
-        """搜索知识库"""
-        conn = self.memory.conn
-        like = f"%{keyword}%"
-        rows = conn.execute("""
-            SELECT id, timestamp, concept, explanation, category, source, confidence, review_count, last_reviewed
-            FROM knowledge
-            WHERE forgotten = 0 AND (concept LIKE ? OR explanation LIKE ? OR category LIKE ?)
-            ORDER BY confidence DESC, last_reviewed DESC
-            LIMIT ?
-        """, (like, like, like, limit)).fetchall()
-        return rows
+            text = response.choices[0].message.content or ""
+            logger.debug(f"Knowledge extraction raw: {text[:200]}")
+            items = self._parse_json(text)
+            logger.info(f"Extracted {len(items)} knowledge items from content")
+            return items
+        except Exception as e:
+            logger.warning(f"Knowledge extraction failed: {e}")
+            return []
+
+    def _parse_json(self, text: str) -> list[KnowledgeItem]:
+        import json
+        match = re.search(r"\[[\s\S]*\]", text)
+        if not match:
+            return []
+        try:
+            data = json.loads(match.group())
+            return [
+                KnowledgeItem(
+                    concept=str(item.get("concept", "")),
+                    explanation=str(item.get("explanation", "")),
+                    category=str(item.get("category", "其他")),
+                )
+                for item in data
+                if isinstance(item, dict) and item.get("concept")
+            ]
+        except Exception:
+            return []
+
+
+class KnowledgeBase:
+    def __init__(self, db: Optional[Database] = None) -> None:
+        self.db = db or get_db()
+        self.extractor = KnowledgeExtractor()
+        logger.info("KnowledgeBase initialized")
+
+    def learn_from_content(
+        self,
+        content: str,
+        title: str,
+        source: str,
+    ) -> int:
+        items = self.extractor.extract(f"标题：{title}\n内容：{content}")
+        saved = 0
+        for item in items:
+            try:
+                with self.db.get_cursor() as cursor:
+                    cursor.execute(
+                        """INSERT INTO knowledge
+                           (timestamp, concept, explanation, category, confidence)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        (datetime.now().isoformat(), item.concept,
+                         item.explanation, item.category, item.confidence),
+                    )
+                    saved += 1
+            except Exception as e:
+                logger.warning(f"Failed to save knowledge item: {e}")
+        logger.info(f"Saved {saved}/{len(items)} knowledge items from [{source}]")
+        return saved
+
+    def get_all(self, limit: int = 100) -> list[dict[str, Any]]:
+        try:
+            with self.db.get_cursor() as cursor:
+                cursor.execute(
+                    "SELECT * FROM knowledge ORDER BY timestamp DESC LIMIT ?",
+                    (limit,),
+                )
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception:
+            return []
+
+    def get_by_category(self, category: str) -> list[dict[str, Any]]:
+        try:
+            with self.db.get_cursor() as cursor:
+                cursor.execute(
+                    "SELECT * FROM knowledge WHERE category = ? ORDER BY timestamp DESC",
+                    (category,),
+                )
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception:
+            return []
+
+    def review_knowledge(self, knowledge_id: int, confidence_delta: int = 1) -> None:
+        try:
+            with self.db.get_cursor() as cursor:
+                cursor.execute(
+                    """UPDATE knowledge
+                       SET review_count = review_count + 1,
+                           last_reviewed = ?,
+                           confidence = CASE
+                               WHEN confidence + ? > 5 THEN 5
+                               ELSE confidence + ?
+                           END
+                       WHERE id = ?""",
+                    (datetime.now().isoformat(), confidence_delta, confidence_delta, knowledge_id),
+                )
+                logger.debug(f"Reviewed knowledge id={knowledge_id}, delta={confidence_delta}")
+        except Exception as e:
+            logger.error(f"Failed to review knowledge: {e}")
+
+    def get_review_due(self, limit: int = 10) -> list[dict[str, Any]]:
+        try:
+            with self.db.get_cursor() as cursor:
+                cursor.execute(
+                    """SELECT * FROM knowledge
+                       WHERE review_count < 5
+                       ORDER BY confidence ASC, review_count ASC
+                       LIMIT ?""",
+                    (limit,),
+                )
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception:
+            return []
+
+    def get_stats(self) -> dict[str, Any]:
+        try:
+            with self.db.get_cursor() as cursor:
+                total = cursor.execute(
+                    "SELECT COUNT(*) as c FROM knowledge"
+                ).fetchone()["c"]
+                by_cat: dict[str, int] = {}
+                for cat in CATEGORIES:
+                    c = cursor.execute(
+                        "SELECT COUNT(*) as c FROM knowledge WHERE category = ?",
+                        (cat,),
+                    ).fetchone()["c"]
+                    if c > 0:
+                        by_cat[cat] = c
+                return {"total": total, "by_category": by_cat}
+        except Exception:
+            return {"total": 0, "by_category": {}}
+
+
+def get_knowledge_base() -> KnowledgeBase:
+    return KnowledgeBase()

@@ -1,85 +1,159 @@
+#!/usr/bin/env python3
 """
-赛博人类 v0.3 - 主入口（日常生活版）
-
-运行方式:
-  python3 main.py          过一天的生活
-  python3 main.py --auto   跑完退出（配合 cron）
-  python3 main.py --chat   直接聊天
+主程序入口
+模拟小雪球的完整一天
 """
 
+from __future__ import annotations
+
+import argparse
 import sys
-from datetime import datetime, date
-from cyber_human import CyberHuman
-from memory import Memory
-from browser import Browser
-from daily_life import DailyLife
-from character import get_personality_prompt
+import time
+from datetime import datetime
+from typing import Optional
+
+import config
+from logger import get_logger, main_logger
+from memory import get_db
+from memory_core import get_consolidation
+from daily_life import DailyLifeEngine, get_engine
+from emotion import get_emotion_system
+
+logger = get_logger(__name__)
 
 
-def create_cyber_human():
-    return CyberHuman(
-        name="小雪球",
-        personality=get_personality_prompt()
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="赛博人类 - 小雪球的 AI 模拟")
+    parser.add_argument(
+        "--auto", action="store_true",
+        help="自动模式：运行完整一天后自动退出（用于 cron 定时任务）",
     )
+    parser.add_argument(
+        "--chat", action="store_true",
+        help="交互式对话模式",
+    )
+    parser.add_argument(
+        "--slot", type=str, default="",
+        help="只运行指定的时段（标签名）",
+    )
+    parser.add_argument(
+        "--simulate-date", type=str, default="",
+        help="模拟指定日期（YYYY-MM-DD）",
+    )
+    parser.add_argument(
+        "--consolidate", action="store_true",
+        help="只运行记忆巩固程序",
+    )
+    return parser.parse_args()
 
 
-def main():
-    print("🤖 赛博人类 v0.3")
-    print("=" * 40)
-    
-    human = create_cyber_human()
-    memory = Memory()
-    browser = Browser()
-    life = DailyLife(human, memory, browser)
-    
-    if "--chat" in sys.argv:
-        print(f"\n💬 和 {human.name} 对话（输入 quit 退出）\n")
-        history = []
-        while True:
-            try:
-                user_input = input("你: ")
-                if user_input.lower() in ("quit", "exit", "q"):
-                    break
-            except EOFError:
-                break
-            reply = human.chat(user_input, history[-6:])
-            print(f"{human.name}: {reply}")
+def run_full_day() -> None:
+    logger.info("=" * 50)
+    logger.info("赛博人类 · 小雪球 · 每日模拟开始")
+    logger.info("=" * 50)
+
+    engine = get_engine()
+
+    try:
+        results = engine.run_full_day()
+        slot_count = len(results)
+        thought_count = sum(
+            len(r.get("thoughts", [])) for r in results
+            if "error" not in r
+        )
+        logger.info(f"今日模拟完成：共 {slot_count} 个时段，{thought_count} 条想法")
+    except Exception as e:
+        logger.error(f"模拟过程中出错: {e}", exc_info=True)
+        sys.exit(1)
+
+    logger.info("=" * 50)
+    logger.info("赛博人类 · 每日模拟结束")
+    logger.info("=" * 50)
+
+
+def run_single_slot(slot_label: str) -> None:
+    engine = get_engine()
+    from daily_life import TIME_SLOTS
+    target = next((s for s in TIME_SLOTS if s.label == slot_label), None)
+    if not target:
+        logger.error(f"未找到时段: {slot_label}")
+        available = ", ".join(s.label for s in TIME_SLOTS)
+        logger.error(f"可用时段: {available}")
+        sys.exit(1)
+    logger.info(f"运行单个时段: {target.label}")
+    try:
+        result = engine.run_slot(target)
+        logger.info(f"时段完成: {result}")
+    except Exception as e:
+        logger.error(f"时段运行出错: {e}", exc_info=True)
+        sys.exit(1)
+
+
+def run_chat_mode() -> None:
+    from cyber_human import get_ai
+    ai = get_ai()
+    logger.info("进入交互式对话模式（输入 exit 或 quit 退出）")
+    print("\n=== 赛博人类 · 小雪球 ===")
+    print("你好呀！我是小雪球~有什么想聊的吗？\n")
+    history: list[dict[str, str]] = []
+    while True:
+        try:
+            user_input = input("你: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n再见啦~")
+            break
+        if not user_input:
+            continue
+        if user_input.lower() in ("exit", "quit", "退出", "q"):
+            print("再见啦~下次再聊~")
+            break
+        try:
+            reply = ai.chat(user_input, history)
+            print(f"小雪球: {reply}\n")
             history.append({"role": "user", "content": user_input})
             history.append({"role": "assistant", "content": reply})
-    
-    else:
-        # 过一天的生活
-        print(f"\n🌅 {human.name} 睡醒了……")
-        life.run_full_day()
-        
-        # AI 自训练（auto 模式自动执行）
-        if "--auto" in sys.argv:
-            try:
-                print("\n🧠 AI 自训练中...")
-                memory.train()
-            except Exception as e:
-                print("  [错误] AI自训练失败: " + str(e))
-        
-        if "--auto" not in sys.argv:
-            print(f"\n💬 可以跟我聊天了（输入 quit 退出）")
-            history = []
-            while True:
-                try:
-                    user_input = input("\n你: ")
-                    if user_input.lower() in ("quit", "exit", "q"):
-                        break
-                except EOFError:
-                    break
-                reply = human.chat(user_input, history[-6:])
-                print(f"{human.name}: {reply}")
-                history.append({"role": "user", "content": user_input})
-                history.append({"role": "assistant", "content": reply})
-    
-    memory.close()
-    
-    if "--auto" in sys.argv:
-        print("🏁 明天见~")
+            if len(history) > 20:
+                history = history[-20:]
+        except Exception as e:
+            print(f"小雪球：（emmm...好像出了点问题）{e}")
+            logger.error(f"Chat error: {e}")
+
+
+def run_consolidation() -> None:
+    logger.info("运行记忆巩固程序...")
+    mc = get_consolidation()
+    result = mc.consolidate()
+    logger.info(f"记忆巩固完成: {result}")
+
+
+def main() -> None:
+    args = parse_args()
+
+    if args.consolidate:
+        run_consolidation()
+        return
+
+    if args.slot:
+        run_single_slot(args.slot)
+        return
+
+    if args.chat:
+        run_chat_mode()
+        return
+
+    if args.auto:
+        run_full_day()
+        return
+
+    run_full_day()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("用户中断，程序退出")
+        sys.exit(0)
+    except Exception as e:
+        logger.error(f"Fatal error: {e}", exc_info=True)
+        sys.exit(1)

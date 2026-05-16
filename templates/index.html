@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>赛博人类 - 小雪球</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+</head>
+<body>
+    <!-- Header -->
+    <header class="app-header">
+        <div class="header-left">
+            <span class="app-title">&#x1F3C4; 赛博人类</span>
+            <span class="app-subtitle">小雪球</span>
+        </div>
+        <div class="header-right">
+            <span id="emotion-badge" class="emotion-badge">&#x1F60A;</span>
+            <span id="current-time" class="time-display"></span>
+            <button id="theme-toggle" class="icon-btn" title="切换深色模式">&#x1F319;</button>
+        </div>
+    </header>
+
+    <!-- Tab Navigation -->
+    <nav class="tab-nav" id="tab-nav">
+        <button class="tab-btn active" data-tab="browse">&#x1F310; 今日浏览</button>
+        <button class="tab-btn" data-tab="timeline">&#x1F4CB; 时间线</button>
+        <button class="tab-btn" data-tab="thoughts">&#x1F4AD; 想法</button>
+        <button class="tab-btn" data-tab="diary">&#x1F4DD; 日记</button>
+        <button class="tab-btn" data-tab="phone">&#x1F4F1; 手机</button>
+        <button class="tab-btn" data-tab="stats">&#x1F4CA; 统计</button>
+        <button class="tab-btn" data-tab="knowledge">&#x1F4D6; 知识</button>
+        <button class="tab-btn" data-tab="profile">&#x1F9D1; 主页</button>
+        <button class="tab-btn" data-tab="search">&#x1F50D; 搜索</button>
+        <button class="tab-btn" data-tab="chat">&#x1F4AC; 聊天</button>
+        <button class="tab-btn" data-tab="control">&#x2699; 控制</button>
+    </nav>
+
+    <!-- Tab Content -->
+    <main class="tab-content">
+
+        <!-- 今日浏览 -->
+        <section id="tab-browse" class="tab-panel active">
+            <h2>今日浏览记录</h2>
+            <div id="browse-list" class="card-list">
+                <div class="loading">加载中...</div>
+            </div>
+        </section>
+
+        <!-- 时间线 -->
+        <section id="tab-timeline" class="tab-panel">
+            <h2>今日时间线</h2>
+            <div class="timeline-container" id="timeline-container"></div>
+        </section>
+
+        <!-- 想法 -->
+        <section id="tab-thoughts" class="tab-panel">
+            <h2>想法记录</h2>
+            <div id="thoughts-list" class="card-list">
+                <div class="loading">加载中...</div>
+            </div>
+        </section>
+
+        <!-- 日记 -->
+        <section id="tab-diary" class="tab-panel">
+            <h2>日记</h2>
+            <button id="write-diary-btn" class="primary-btn">&#x270F; 写日记</button>
+            <div id="diary-list" class="card-list"></div>
+        </section>
+
+        <!-- 手机模拟 -->
+        <section id="tab-phone" class="tab-panel">
+            <div class="phone-frame">
+                <div class="phone-screen" id="phone-screen">
+                    <div class="phone-header">
+                        <span id="phone-time">--:--</span>
+                    </div>
+                    <div id="phone-content" class="phone-content">
+                        <p class="phone-placeholder">打开应用查看内容</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 统计 -->
+        <section id="tab-stats" class="tab-panel">
+            <h2>数据统计</h2>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-num" id="stat-browses">-</div>
+                    <div class="stat-label">浏览记录</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-num" id="stat-thoughts">-</div>
+                    <div class="stat-label">想法</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-num" id="stat-diary">-</div>
+                    <div class="stat-label">日记</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-num" id="stat-tokens">-</div>
+                    <div class="stat-label">Token 消耗</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-num" id="stat-cost">-</div>
+                    <div class="stat-label">估算成本</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-num" id="stat-emotion">-</div>
+                    <div class="stat-label">当前情绪</div>
+                </div>
+            </div>
+            <div id="chart-container" class="chart-container">
+                <div id="chart-memory" class="chart"></div>
+                <div id="chart-knowledge" class="chart"></div>
+            </div>
+        </section>
+
+        <!-- 知识 -->
+        <section id="tab-knowledge" class="tab-panel">
+            <h2>知识库</h2>
+            <div id="knowledge-list" class="card-list"></div>
+        </section>
+
+        <!-- 个人主页 -->
+        <section id="tab-profile" class="tab-panel">
+            <div id="profile-content"></div>
+        </section>
+
+        <!-- 搜索 -->
+        <section id="tab-search" class="tab-panel">
+            <h2>🔍 搜索</h2>
+            <div class="search-box-wrapper">
+                <input type="text" id="search-input" class="search-input" placeholder="搜索浏览记录、想法、日记、知识……" />
+                <button id="search-btn" class="primary-btn">搜索</button>
+            </div>
+            <div id="search-results" class="card-list"></div>
+        </section>
+
+        <!-- 聊天 -->
+        <section id="tab-chat" class="tab-panel">
+            <h2>和小雪球聊天</h2>
+            <div class="chat-container">
+                <div id="chat-messages" class="chat-messages"></div>
+                <div class="chat-input-row">
+                    <input type="text" id="chat-input" class="chat-input" placeholder="输入消息..." autocomplete="off">
+                    <button id="chat-send" class="primary-btn">发送</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- 控制 -->
+        <section id="tab-control" class="tab-panel">
+            <h2>控制面板</h2>
+            <div class="control-grid">
+                <button id="btn-simulate" class="control-btn">&#x25B6; 模拟一天</button>
+                <button id="btn-clear" class="control-btn danger">&#x1F5D1; 清除数据</button>
+                <button id="btn-refresh" class="control-btn">&#x1F504; 刷新数据</button>
+            </div>
+            <div id="control-log" class="control-log"></div>
+        </section>
+
+    </main>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
