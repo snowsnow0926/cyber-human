@@ -489,12 +489,12 @@
     // ── 启动 ──────────────────────────────────────────────────
 
     // -- Search events --
-    const searchInput = ;
-    const searchBtn = ;
+    const searchInput = $("#search-input");
+    const searchBtn = $("#search-btn");
     if (searchInput && searchBtn) {
-        searchBtn.addEventListener(click, function() { doSearch(searchInput.value); });
-        searchInput.addEventListener(keydown, function(e) {
-            if (e.key === Enter) doSearch(searchInput.value);
+        searchBtn.addEventListener("click", function() { doSearch(searchInput.value); });
+        searchInput.addEventListener("keydown", function(e) {
+            if (e.key === "Enter") doSearch(searchInput.value);
         });
     }
 
