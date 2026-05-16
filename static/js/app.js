@@ -88,6 +88,7 @@
                 case "knowledge": await loadKnowledge();  break;
                 case "phone":    await loadPhone();      break;
                 case "timeline": await loadTimeline();    break;
+                case "profile":  await loadProfile();   break;
             }
         } catch (e) {
             console.error(`Failed to load tab ${tab}:`, e);
@@ -95,7 +96,7 @@
     }
 
     async function loadBrowses() {
-        const data = await api("/api/today/browses");
+        const data = await api("/cyber-human/api/today/browses");
         const el = $("#browse-list");
         if (!el) return;
         if (!data.data.length) {
@@ -112,7 +113,7 @@
     }
 
     async function loadThoughts() {
-        const data = await api("/api/today/thoughts");
+        const data = await api("/cyber-human/api/today/thoughts");
         const el = $("#thoughts-list");
         if (!el) return;
         if (!data.data.length) {
@@ -136,7 +137,7 @@
     }
 
     async function loadDiary() {
-        const data = await api("/api/diary");
+        const data = await api("/cyber-human/api/diary");
         const el = $("#diary-list");
         if (!el) return;
         if (!data.data.length) {
@@ -152,9 +153,18 @@
     }
 
     async function loadStats() {
-        const data = await api("/api/stats");
+        const data = await api("/cyber-human/api/stats");
         const tokens = data.total_tokens || 0;
         const cost = (tokens * 0.000001).toFixed(4);
+        var todayTokens = data.today_tokens || 0;
+        var todayCost = (todayTokens * 0.000001).toFixed(4);
+        var apiCallsToday = data.api_calls_today || 0;
+        var apiCallsTotal = data.api_calls_total || 0;
+        var sourceCount = data.source_count || 0;
+        var nightsCons = data.nights_consolidated || 0;
+        var promotedMid = data.promoted_mid || 0;
+        var promotedLong = data.promoted_long || 0;
+        var forgotten = data.forgotten || 0;
         $("#stat-browses").textContent = data.browse_count || 0;
         $("#stat-thoughts").textContent = data.thought_count || 0;
         $("#stat-diary").textContent = data.diary_count || 0;
@@ -162,11 +172,34 @@
         $("#stat-cost").textContent = `$${cost}`;
         const emotion = data.emotion;
         $("#stat-emotion").textContent = emotion ? `${emotion.current.state} ${emotion.current.emoji}` : "-";
+
+        // Build enhanced stats HTML below the charts
+        var chartContainer = document.getElementById("chart-container");
+        if (chartContainer) {
+            var detailHtml = '<div style="margin-top:16px">' +
+                '<div class="card"><h2>Token 消耗</h2>' +
+                '<div style="font-size:13px;color:#888;line-height:1.8">' +
+                '<div>今日调用: <strong style="color:#fff">' + apiCallsToday + '</strong> 次 · 消耗 <strong style="color:#fff">' + todayTokens.toLocaleString() + '</strong> tokens</div>' +
+                '<div>总调用: <strong style="color:#fff">' + apiCallsTotal + '</strong> 次 · 总消耗 <strong style="color:#fff">' + tokens.toLocaleString() + '</strong> tokens</div>' +
+                '<div style="margin-top:6px;font-size:11px;color:#555">按 DeepSeek V4 价格估算：今日 ~$' + todayCost + ' · 总计 ~$' + cost + '</div>' +
+                '</div></div>' +
+                '<div class="card" style="margin-top:12px"><h2>记忆系统</h2>' +
+                '<div class="stats-grid" style="grid-template-columns:repeat(4,1fr)">' +
+                '<div class="stat-card"><div class="stat-num">' + nightsCons + '</div><div class="stat-label">夜间巩固</div></div>' +
+                '<div class="stat-card"><div class="stat-num">' + promotedMid + '</div><div class="stat-label">升中期</div></div>' +
+                '<div class="stat-card"><div class="stat-num">' + promotedLong + '</div><div class="stat-label">升长期</div></div>' +
+                '<div class="stat-card"><div class="stat-num">' + forgotten + '</div><div class="stat-label">已遗忘</div></div>' +
+                '</div></div>' +
+                '</div>';
+            var oldDetail = document.getElementById("stats-detail");
+            if (oldDetail) oldDetail.remove();
+            chartContainer.insertAdjacentHTML("afterend", "<div id=\"stats-detail\">" + detailHtml + "</div>");
+        }
         initCharts(data);
     }
 
     async function loadKnowledge() {
-        const data = await api("/api/knowledge");
+        const data = await api("/cyber-human/api/knowledge");
         const el = $("#knowledge-list");
         if (!el) return;
         if (!data.data.length) {
@@ -185,47 +218,97 @@
         `).join("");
     }
 
-    async function loadTimeline() {
-        const data = await api("/api/timeline");
-        const el = $("#timeline-container");
-        if (!el) return;
-        const items = [];
-        data.browses.forEach((b) => {
-            items.push({ time: b.timestamp, type: "browse", title: b.title, source: b.source });
-        });
-        data.thoughts.forEach((t) => {
-            items.push({ time: t.timestamp, type: "thought", title: t.thought.slice(0, 80), source: t.source });
-        });
-        items.sort((a, b) => new Date(a.time) - new Date(b.time));
-        if (!items.length) {
-            el.innerHTML = '<div class="card"><div class="card-body">今日时间线为空</div></div>';
+    async function loadTimeline(dateStr) {
+        if (!dateStr) {
+            var dateInput = document.getElementById("timeline-date");
+            dateStr = dateInput ? dateInput.value : "";
+        }
+        if (!dateStr) {
+            var now = new Date();
+            dateStr = now.getFullYear() + "-" + String(now.getMonth()+1).padStart(2,"0") + "-" + String(now.getDate()).padStart(2,"0");
+        }
+        var url = "/cyber-human/api/timeline?date=" + encodeURIComponent(dateStr);
+        var data = {};
+        try {
+            data = await api(url);
+        } catch(e) {
+            var cnt = document.getElementById("timeline-container");
+            if (cnt) cnt.innerHTML = '<div class="card"><div style="color:red">加载失败: ' + e.message + '</div></div>';
             return;
         }
-        el.innerHTML = items.map((item) => `
-            <div class="timeline-item ${item.type}">
-                <div class="timeline-dot"></div>
-                <div class="timeline-content">
-                    <div class="timeline-time">${formatTime(item.time)} · ${escHtml(item.source)}</div>
-                    <div class="card-body">${escHtml(item.title)}</div>
-                </div>
-            </div>
-        `).join("");
+        var cnt = document.getElementById("timeline-container");
+        if (!cnt) return;
+
+        // Schedule summary section
+        var scheduleHtml = "";
+        if (data.schedule && data.schedule.length) {
+            scheduleHtml = '<div class="card" style="margin-bottom:16px;border-left:3px solid #667eea">' +
+                '<div class="card-title" style="font-size:1.1rem">日程安排</div>';
+            data.schedule.forEach(function(s) {
+                var activity = s.activity || s.title || s.description || "活动";
+                var notes = s.notes || "";
+                var energy = s.energy_level ? (" 能量" + s.energy_level) : "";
+                var moodEmoji = s.mood || "";
+                scheduleHtml += '<div style="padding:4px 0;display:flex;align-items:flex-start">' +
+                    '<span style="min-width:55px;font-weight:600;color:#667eea">' + escHtml(s.time_slot || "") + '</span>' +
+                    '<span style="flex:1;font-size:0.9rem">' + moodEmoji + escHtml(activity) + escHtml(energy) +
+                    (notes ? '<br><span style="color:#999;font-size:0.8rem">' + escHtml(notes) + '</span>' : "") +
+                    '</span></div>';
+            });
+            scheduleHtml += '</div>';
+        }
+
+        // Timeline items
+        var items = [];
+        (data.browses || []).forEach(function(b) {
+            items.push({ time: b.timestamp, type: "browse", title: b.title, source: b.source });
+        });
+        (data.thoughts || []).forEach(function(t) {
+            items.push({ time: t.timestamp, type: "thought", title: (t.thought||"").slice(0, 80), source: t.source });
+        });
+        items.sort(function(a,b) { return new Date(a.time) - new Date(b.time); });
+
+        var itemsHtml = "";
+        if (!items.length) {
+            itemsHtml = '<div class="card"><div class="card-body">暂无活动记录</div></div>';
+        } else {
+            itemsHtml = '<div class="card"><div class="card-title" style="font-size:1.0rem">活动时间线</div>' +
+                items.map(function(item) {
+                    return '<div class="timeline-item ' + item.type + '">' +
+                        '<div class="timeline-dot"></div>' +
+                        '<div class="timeline-content">' +
+                        '<div class="timeline-time">' + formatTime(item.time) + ' &middot; ' + escHtml(item.source) + '</div>' +
+                        '<div class="card-body">' + escHtml(item.title) + '</div>' +
+                        '</div></div>';
+                }).join("") + '</div>';
+        }
+
+        cnt.innerHTML = scheduleHtml + itemsHtml;
     }
 
     async function loadPhone() {
-        const data = await api("/api/today/thoughts");
-        const el = $("#phone-content");
-        if (!el) return;
-        if (!data.data.length) {
-            el.innerHTML = '<p class="phone-placeholder">暂无通知</p>';
+        var data;
+        try {
+            data = await api("/cyber-human/api/notifications");
+        } catch(e) {
+            var el = document.getElementById("phone-content");
+            if (el) el.innerHTML = '<p class="phone-placeholder">加载失败</p>';
             return;
         }
-        el.innerHTML = data.data.slice(0, 5).map((t) => `
-            <div class="card" style="margin-bottom:8px;">
-                <div class="card-title" style="font-size:0.85rem">${escHtml(t.source)}</div>
-                <div class="card-body" style="font-size:0.8rem">${escHtml(t.thought.slice(0, 60))}...</div>
-            </div>
-        `).join("");
+        var el = document.getElementById("phone-content");
+        if (!el) return;
+        if (!data.data || !data.data.length) {
+            el.innerHTML = '<p class="phone-placeholder">小雪球的手机还没收到推送</p>';
+            return;
+        }
+        el.innerHTML = data.data.map(function(n) {
+            var clickable = n.url ? ' onclick="window.open(\'' + escHtml(n.url) + '\', \'_blank\')" style="cursor:pointer"' : '';
+            return '<div' + clickable + ' style="background:#1c1c1e;border-radius:12px;padding:12px;margin-bottom:8px;border-left:3px solid ' + (n.color || '#5a9eff') + '">' +
+                '<div style="color:#888;font-size:11px">' + escHtml(n.app) + '</div>' +
+                '<div style="color:#fff;margin:4px 0;font-size:13px">' + escHtml(n.title) + '</div>' +
+                '<div style="color:#aaa;font-size:11px">' + escHtml(n.time || '') + '</div>' +
+                '</div>';
+        }).join("");
     }
 
     // ── 图表 ─────────────────────────────────────────────────
@@ -280,7 +363,7 @@
 
     // -- Profile tab --
     async function loadProfile() {
-        const data = await api("/api/profile");
+        const data = await api("/cyber-human/api/profile");
         const el = $("#profile-content");
         if (!el) return;
         const traits = (data.traits || []).map(function(t) {
@@ -327,7 +410,7 @@
         if (!el) return;
         el.innerHTML = '<div class="loading">\u641c\u7d22\u4e2d...</div>';
         try {
-            const data = await api("/api/search?q=" + encodeURIComponent(query));
+            const data = await api("/cyber-human/api/search?q=" + encodeURIComponent(query));
             if (!data.data.length) {
                 el.innerHTML = '<div class="card"><div class="card-body">\u6ca1\u6709\u627e\u5230\u7ed3\u679c</div></div>';
                 return;
@@ -356,7 +439,7 @@
         addChatMsg("user", text);
         state.chatHistory.push({ role: "user", content: text });
         try {
-            const resp = await api("/api/chat", {
+            const resp = await api("/cyber-human/api/chat", {
                 method: "POST",
                 body: JSON.stringify({ message: text, history: state.chatHistory }),
             });
@@ -380,12 +463,42 @@
 
     // ── 控制面板 ──────────────────────────────────────────────
     $("#btn-simulate")?.addEventListener("click", async () => {
-        logControl("正在启动全天模拟...");
+        var dateInput = document.getElementById("sim-date");
+        var simDate = dateInput ? dateInput.value : "";
+        var label = simDate || "今天";
+        logControl("正在启动" + label + "全天模拟...");
         try {
-            await api("/api/control/simulate_day", { method: "POST" });
-            logControl("模拟已启动，进度可在各页面查看", "success");
+            var body = simDate ? JSON.stringify({date: simDate}) : undefined;
+            var opts = { method: "POST", headers: {"Content-Type": "application/json"} };
+            if (body) opts.body = body;
+            var r = await api("/cyber-human/api/control/simulate_day", opts);
+            logControl(label + "模拟已启动（" + (r.date || "today") + "），进度可在各页面查看", "success");
         } catch (e) {
-            logControl(`启动失败: ${e.message}`, "error");
+            logControl("启动失败: " + e.message, "error");
+        }
+    });
+
+    $("#btn-clear-browses")?.addEventListener("click", async () => {
+        if (!confirm("确定清除今日浏览记录？")) return;
+        logControl("正在清除...");
+        try {
+            var r = await api("/cyber-human/api/control/clear_browses", { method: "POST" });
+            logControl("已清除 " + (r.cleared || 0) + " 条记录", "success");
+            loadTabData("browse");
+        } catch (e) {
+            logControl(`清除失败: ${e.message}`, "error");
+        }
+    });
+
+    $("#btn-clear-all")?.addEventListener("click", async () => {
+        if (!confirm("确定要清空所有数据吗？此操作不可撤销！")) return;
+        logControl("正在清空所有数据...");
+        try {
+            var r = await api("/cyber-human/api/control/clear_data", { method: "POST" });
+            logControl("已清空：" + JSON.stringify(r.cleared || r), "success");
+            loadTabData(state.currentTab);
+        } catch (e) {
+            logControl(`清空失败: ${e.message}`, "error");
         }
     });
 
@@ -408,7 +521,7 @@
     // ── 写日记 ───────────────────────────────────────────────
     $("#write-diary-btn")?.addEventListener("click", async () => {
         try {
-            await api("/api/diary/today", { method: "POST" });
+            await api("/cyber-human/api/diary/today", { method: "POST" });
             logControl("日记已生成", "success");
             await loadDiary();
         } catch (e) {
@@ -498,8 +611,28 @@
         });
     }
 
+    // -- Timeline date picker --
+    var timelineDateInput = document.getElementById("timeline-date");
+    var timelineTodayBtn = document.getElementById("timeline-today-btn");
+    if (timelineDateInput) {
+        var todayStr = new Date().toISOString().split("T")[0];
+        timelineDateInput.value = todayStr;
+        timelineDateInput.addEventListener("change", function() {
+            if (state.currentTab === "timeline") loadTimeline(timelineDateInput.value);
+        });
+    }
+    if (timelineTodayBtn) {
+        timelineTodayBtn.addEventListener("click", function() {
+            if (timelineDateInput) {
+                var ts = new Date().toISOString().split("T")[0];
+                timelineDateInput.value = ts;
+                if (state.currentTab === "timeline") loadTimeline(ts);
+            }
+        });
+    }
+
     async function init() {
-        await api("/api/emotion").then((data) => {
+        await api("/cyber-human/api/emotion").then((data) => {
             const badge = $("#emotion-badge");
             if (badge && data.current) badge.textContent = data.current.emoji;
         }).catch(() => {});

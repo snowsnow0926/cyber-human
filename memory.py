@@ -80,6 +80,7 @@ class Database:
         if self._conn is None:
             self._conn = sqlite3.connect(
                 str(self.db_path),
+                check_same_thread=False,
                 detect_types=sqlite3.PARSE_DECLTYPES,
             )
             self._conn.row_factory = sqlite3.Row
@@ -286,6 +287,7 @@ class Database:
 
     def get_stats(self) -> dict[str, Any]:
         try:
+            today = date.today().isoformat()
             with self.get_cursor() as cursor:
                 cursor.execute("SELECT COUNT(*) as c FROM browse_log")
                 browse_count = cursor.fetchone()["c"]
@@ -296,31 +298,70 @@ class Database:
                 cursor.execute("SELECT COUNT(*) as c FROM diary")
                 diary_count = cursor.fetchone()["c"]
 
-                cursor.execute(
-                    "SELECT SUM(total_tokens) as s FROM token_usage"
-                )
+                # Total tokens
+                cursor.execute("SELECT SUM(total_tokens) as s FROM token_usage")
                 total_tokens = cursor.fetchone()["s"] or 0
 
+                # Today tokens
+                cursor.execute(
+                    "SELECT SUM(total_tokens) as s FROM token_usage WHERE timestamp LIKE ?",
+                    (f"{today}%",)
+                )
+                today_tokens = cursor.fetchone()["s"] or 0
+
+                # API calls total
+                cursor.execute("SELECT COUNT(*) as c FROM token_usage")
+                api_calls_total = cursor.fetchone()["c"]
+
+                # API calls today
+                cursor.execute(
+                    "SELECT COUNT(*) as c FROM token_usage WHERE timestamp LIKE ?",
+                    (f"{today}%",)
+                )
+                api_calls_today = cursor.fetchone()["c"]
+
+                # Distinct sources
+                cursor.execute("SELECT COUNT(DISTINCT source) as c FROM browse_log")
+                source_count = cursor.fetchone()["c"]
+
+                # Memory tiers
                 cursor.execute(
                     """SELECT memory_tier, COUNT(*) as c FROM thoughts GROUP BY memory_tier"""
                 )
                 tier_counts = {row["memory_tier"]: row["c"] for row in cursor.fetchall()}
+
+                # Consolidation stats
+                cursor.execute("SELECT SUM(promoted_to_mid) as m, SUM(promoted_to_long) as l, SUM(forgotten) as f, COUNT(*) as n FROM memory_consolidation")
+                cons = cursor.fetchone()
+                nights = cons["n"] or 0
+                promoted_mid = cons["m"] or 0
+                promoted_long = cons["l"] or 0
+                forgotten = cons["f"] or 0
 
                 return {
                     "browse_count": browse_count,
                     "thought_count": thought_count,
                     "diary_count": diary_count,
                     "total_tokens": total_tokens,
+                    "today_tokens": today_tokens,
+                    "api_calls_total": api_calls_total,
+                    "api_calls_today": api_calls_today,
+                    "source_count": source_count,
                     "tier_counts": tier_counts,
+                    "nights_consolidated": nights,
+                    "promoted_mid": promoted_mid,
+                    "promoted_long": promoted_long,
+                    "forgotten": forgotten,
                 }
         except sqlite3.Error as e:
             logger.error(f"Failed to get stats: {e}")
             return {
-                "browse_count": 0,
-                "thought_count": 0,
-                "diary_count": 0,
-                "total_tokens": 0,
-                "tier_counts": {},
+                "browse_count": 0, "thought_count": 0, "diary_count": 0,
+                "total_tokens": 0, "today_tokens": 0,
+                "api_calls_total": 0, "api_calls_today": 0,
+                "source_count": 0, "tier_counts": {},
+                "nights_consolidated": 0, "promoted_mid": 0,
+                "promoted_long": 0, "forgotten": 0,
             }
 
     def get_today_schedule(self) -> list[dict[str, Any]]:
@@ -330,6 +371,39 @@ class Database:
                 cursor.execute(
                     "SELECT * FROM daily_schedule WHERE date = ? ORDER BY time_slot",
                     (today,),
+                )
+                return [dict(row) for row in cursor.fetchall()]
+        except sqlite3.Error:
+            return []
+
+    def get_browses_by_date(self, date_str: str) -> list[dict[str, Any]]:
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(
+                    "SELECT * FROM browse_log WHERE timestamp LIKE ? ORDER BY timestamp DESC",
+                    (f"{date_str}%",),
+                )
+                return [dict(row) for row in cursor.fetchall()]
+        except sqlite3.Error:
+            return []
+
+    def get_thoughts_by_date(self, date_str: str) -> list[dict[str, Any]]:
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(
+                    "SELECT * FROM thoughts WHERE timestamp LIKE ? ORDER BY timestamp DESC",
+                    (f"{date_str}%",),
+                )
+                return [dict(row) for row in cursor.fetchall()]
+        except sqlite3.Error:
+            return []
+
+    def get_schedule_by_date(self, date_str: str) -> list[dict[str, Any]]:
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(
+                    "SELECT * FROM daily_schedule WHERE date = ? ORDER BY time_slot",
+                    (date_str,),
                 )
                 return [dict(row) for row in cursor.fetchall()]
         except sqlite3.Error:

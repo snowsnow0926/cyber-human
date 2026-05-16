@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>赛博人类 - 小雪球</title>
-    <link rel="stylesheet" href="/static/css/style.css">
-    <script src="/static/js/echarts.min.js"></script>
+    <link rel="stylesheet" href="/static/css/style.css?v=1778910937">
+    <script src="/static/js/echarts.min.js?v=1778910937"></script>
 </head>
 <body>
     <!-- Header -->
@@ -50,6 +50,10 @@
         <!-- 时间线 -->
         <section id="tab-timeline" class="tab-panel">
             <h2>今日时间线</h2>
+            <div style="margin-bottom:12px;display:flex;gap:8px;align-items:center">
+                <input type="date" id="timeline-date" class="search-input" style="max-width:180px;flex:0 0 auto">
+                <button id="timeline-today-btn" class="primary-btn" style="flex:0 0 auto">今天</button>
+            </div>
             <div class="timeline-container" id="timeline-container"></div>
         </section>
 
@@ -163,7 +167,7 @@
 
     </main>
 
-    <script src="/static/js/socket.io.min.js"></script>
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/socket.io.min.js?v=1778910937"></script>
+    <script src="/static/js/app.js?v=1778910937"></script>
 </body>
 </html>

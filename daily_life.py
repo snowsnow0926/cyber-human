@@ -123,7 +123,7 @@ class DailyLifeEngine:
         """加载未完成的事件链"""
         try:
             from datetime import date
-            today = date.today().isoformat()
+            today = sim_date if sim_date else date.today().isoformat()
             rows = self.db.get_conn().__enter__().execute(
                 "SELECT continuation FROM daily_schedule WHERE date = ? AND continuation != '' ORDER BY time_slot DESC LIMIT 3",
                 (today,)
@@ -136,7 +136,7 @@ class DailyLifeEngine:
         """保存事件链延续到明天"""
         try:
             from datetime import date
-            today = date.today().isoformat()
+            today = sim_date if sim_date else date.today().isoformat()
             with self.db.get_cursor() as cursor:
                 cursor.execute(
                     "UPDATE daily_schedule SET continuation = ? WHERE date = ? AND time_slot = (SELECT MAX(time_slot) FROM daily_schedule WHERE date = ?)",
@@ -176,7 +176,7 @@ class DailyLifeEngine:
 
             for item in browse_results:
                 record = BrowseRecord(
-                    timestamp=datetime.now().isoformat(),
+                    timestamp=now_ts,
                     source=item.source,
                     title=item.title,
                     summary=item.summary,
@@ -213,12 +213,12 @@ class DailyLifeEngine:
         logger.info(f"browse_and_think: browsed={total_browsed}, thoughts={thought_count}")
         return results
 
-    def write_diary(self) -> str:
+    def write_diary(self, sim_date: str = "") -> str:
         from memory import DiaryEntry
-        today = date.today().isoformat()
+        today = sim_date if sim_date else date.today().isoformat()
         try:
-            thoughts = self.db.get_today_thoughts()
-            browses = self.db.get_today_browses()
+            thoughts = self.db.get_thoughts_by_date(today) if hasattr(self.db, "get_thoughts_by_date") else self.db.get_today_thoughts()
+            browses = self.db.get_browses_by_date(today) if hasattr(self.db, "get_browses_by_date") else self.db.get_today_browses()
             context = (
                 f"今天共浏览了 {len(browses)} 条内容，"
                 f"产生了 {len(thoughts)} 条想法。"
@@ -278,7 +278,7 @@ class DailyLifeEngine:
         except Exception as e:
             logger.error(f"Failed to save token usage: {e}")
 
-    def run_slot(self, slot: Optional[TimeSlot] = None) -> dict[str, Any]:
+    def run_slot(self, slot: Optional[TimeSlot] = None, sim_date: str = "") -> dict[str, Any]:
         slot = slot or self.get_time_slot()
         self.current_slot = slot
         self.emotion.step()
@@ -317,8 +317,8 @@ class DailyLifeEngine:
         logger.info(f"Slot '{slot.label}' completed")
         return result
 
-    def run_full_day(self) -> list[dict[str, Any]]:
-        today = date.today().isoformat()
+    def run_full_day(self, sim_date: str = "") -> list[dict[str, Any]]:
+        today = sim_date if sim_date else date.today().isoformat()
         logger.info(f"=== Starting full day simulation: {today} ===")
         results: list[dict[str, Any]] = []
         active_slots = [s for s in TIME_SLOTS if s.activity_type not in ("sleep",)]

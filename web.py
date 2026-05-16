@@ -87,9 +87,15 @@ def api_today_thoughts() -> Any:
 def api_timeline() -> Any:
     from memory import get_db
     db = get_db()
-    schedule = db.get_today_schedule()
-    thoughts = db.get_today_thoughts()
-    browses = db.get_today_browses()
+    req_date = request.args.get("date", "").strip()
+    if req_date:
+        schedule = db.get_schedule_by_date(req_date)
+        thoughts = db.get_thoughts_by_date(req_date)
+        browses = db.get_browses_by_date(req_date)
+    else:
+        schedule = db.get_today_schedule()
+        thoughts = db.get_today_thoughts()
+        browses = db.get_today_browses()
     return jsonify({
         "schedule": schedule,
         "thoughts": thoughts,
@@ -170,6 +176,33 @@ def api_knowledge() -> Any:
     return jsonify({"data": items, "total": len(items)})
 
 
+@app.route("/api/notifications")
+@make_response
+def api_notifications() -> Any:
+    """手机通知栏数据"""
+    from memory import get_db
+    db = get_db()
+    brows = db.get_today_browses()
+    app_colors = {
+        "B站热门": "#fb7299", "B站游戏": "#fb7299",
+        "百度热搜": "#4e6ef2", "抖音热搜": "#00d4b2",
+        "知乎热榜": "#0066ff"
+    }
+    notifications = []
+    for b in brows:
+        src = b.get("source", "未知")
+        title = b.get("title", "")[:60]
+        if len(b.get("title", "")) > 60:
+            title += "..."
+        notifications.append({
+            "app": src,
+            "title": title,
+            "url": b.get("url", ""),
+            "time": (b.get("timestamp", ""))[11:16] if len(b.get("timestamp", "")) >= 16 else "",
+            "color": app_colors.get(src, "#5a9eff")
+        })
+    return jsonify({"data": notifications, "total": len(notifications)})
+
 
 @app.route("/api/profile")
 @make_response
@@ -187,7 +220,7 @@ def api_profile() -> Any:
         tc = len(db.get_today_thoughts())
         dc = len(db.get_all_diary())
         kc = len(db.get_all_knowledge())
-        kc_count = len(kc) if kc else 0
+        kc_count = kc
     except:
         bc = tc = dc = kc_count = 0
 
@@ -351,20 +384,83 @@ def api_clear_browses() -> Any:
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/control/clear_data", methods=["POST"])
+@make_response
+def api_clear_data() -> Any:
+    """清空所有数据"""
+    from memory import get_db
+    db = get_db()
+    results = {}
+    try:
+        with db.get_cursor() as cursor:
+            cursor.execute("DELETE FROM browse_log")
+            results["browses"] = cursor.rowcount
+            cursor.execute("DELETE FROM thoughts")
+            results["thoughts"] = cursor.rowcount
+            cursor.execute("DELETE FROM diary")
+            results["diaries"] = cursor.rowcount
+            cursor.execute("DELETE FROM knowledge")
+            results["knowledge"] = cursor.rowcount
+            cursor.execute("DELETE FROM token_usage")
+            results["tokens"] = cursor.rowcount
+            cursor.execute("DELETE FROM daily_schedule")
+            results["schedule"] = cursor.rowcount
+            cursor.execute("DELETE FROM memory_consolidation")
+            results["consolidation"] = cursor.rowcount
+            cursor.execute("DELETE FROM emotions")
+            results["emotions"] = cursor.rowcount
+        logger.info(f"Cleared all data: {results}")
+        return jsonify({"success": True, "cleared": results})
+    except Exception as e:
+        logger.error(f"Failed to clear all data: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/status")
+@make_response
+def api_status() -> Any:
+    """系统状态：天气、节假日、健康信息"""
+    weather_info = {}
+    holiday_info = {}
+    health_info = {}
+    try:
+        from weather import get_weather
+        weather_info = get_weather()
+    except Exception as e:
+        weather_info = {"error": str(e)}
+    try:
+        from holiday import get_holiday_info
+        holiday_info = get_holiday_info()
+    except Exception as e:
+        holiday_info = {"error": str(e)}
+    try:
+        from health_check import get_health_status
+        health_info = get_health_status()
+    except Exception as e:
+        health_info = {"error": str(e)}
+    return jsonify({
+        "weather": weather_info,
+        "holiday": holiday_info,
+        "health": health_info,
+    })
+
+
 @app.route("/api/control/simulate_day", methods=["POST"])
 @make_response
 def api_simulate_day() -> Any:
     from daily_life import get_engine
+    data = request.get_json(silent=True) or {}
+    sim_date = data.get("date", "").strip()
     def run_sim():
         try:
             engine = get_engine()
-            results = engine.run_full_day()
-            socketio.emit("sim_complete", {"slots": len(results)}, room="web")
+            results = engine.run_full_day(sim_date)
+            socketio.emit("sim_complete", {"slots": len(results), "date": sim_date}, room="web")
         except Exception as e:
             logger.error(f"Simulate day error: {e}")
             socketio.emit("sim_error", {"error": str(e)}, room="web")
     Thread(target=run_sim, daemon=True).start()
-    return jsonify({"status": "started"})
+    return jsonify({"status": "started", "date": sim_date or "today"})
 
 
 # ── WebSocket 事件 ──────────────────────────────────────────────────────────
