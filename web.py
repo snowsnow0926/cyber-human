@@ -167,13 +167,20 @@ def api_timeline() -> Any:
     browse_slot_order = ["08:00", "09:00", "11:00", "12:00", "14:00", "16:00", "18:00", "20:00", "22:00", "23:00", "00:00"]
 
     def _assign_slot(h: str) -> str:
-        """将小时字符串分配到最近的时间槽。小时 00 属于 00:00 槽。"""
-        if h == "00":
+        """将小时字符串分配到最近的时间槽。小时 00 属于 00:00 槽。
+        使用整数比较避免字符串字典序陷阱。"""
+        hour = int(h) if h.isdigit() else -1
+        if hour < 0:
             return "00:00"
+        if hour == 0:
+            return "00:00"
+        # 找最接近且不超过的小时槽
+        best = "00:00"
         for bs in browse_slot_order[:-1]:  # 跳过末尾的 "00:00"
-            if h <= bs[:2]:
-                return bs
-        return "00:00"
+            slot_hour = int(bs[:2])
+            if slot_hour <= hour:
+                best = bs
+        return best
 
     for b in browses:
         ts = b.get("timestamp", "")

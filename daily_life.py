@@ -12,6 +12,7 @@ from typing import Any, Optional
 from logger import get_logger
 from character import should_be_interested, get_interest_weight
 from memory import BrowseRecord, Thought, DiaryEntry
+from memory_core import get_consolidation
 
 logger = get_logger(__name__)
 
@@ -77,6 +78,7 @@ class DailyLifeEngine:
         self._is_simulating = False
         self._block_index = 0
         self._sim_date: str = ""
+        self._seen_titles: set[str] = set()
         logger.info("DailyLifeEngine initialized (v0.7 merge)")
 
     def _today(self, sim_date: str = "") -> str:
@@ -179,8 +181,13 @@ class DailyLifeEngine:
             if result:
                 self.events.append(result)
 
-        # 模拟结束，写日记（_is_simulating 为 True 时才写）
+        # 模拟结束：写日记 + 记忆巩固
         self._write_diary(sim_date)
+        try:
+            mc = get_consolidation()
+            mc.consolidate()
+        except Exception as e:
+            logger.warning(f"记忆巩固失败: {e}")
 
         logger.warning("=" * 40)
         logger.info(f">>> 今天执行了 {len(self.events)} 个时间块, 消耗 ~{self.total_tokens} tokens")
@@ -299,16 +306,15 @@ class DailyLifeEngine:
 
             results = []
             total_cost = 0
-            seen_titles: set[str] = set()
 
             for br in browse_results[:5]:  # 最多处理5条
                 if not br.title or "失败" in br.title or "暂无" in br.title:
                     continue
-                # 同一区块内去重（避免多个源返回相同内容）
+                # 跨区块全局去重（避免不同时间段拉取到相同内容）
                 title_key = br.title[:60]
-                if title_key in seen_titles:
+                if title_key in self._seen_titles:
                     continue
-                seen_titles.add(title_key)
+                self._seen_titles.add(title_key)
 
                 # ===== 1. 保存浏览记录（模拟模式下使用该区块的时间戳）=====
                 if self._is_simulating:
@@ -428,40 +434,76 @@ class DailyLifeEngine:
             return None
 
     def _write_diary(self, sim_date: str = ""):
-        """如果今天还没有日记，写一篇"""
+        """如果今天还没有日记，调用 AI 写一篇"""
         today = self._today(sim_date)
         try:
-            # 检查是否已有日记
             existing = None
             try:
                 existing = list(filter(lambda d: d.get("date", "") == today, self.db.get_all_diary()))
-            except:
+            except Exception:
                 pass
             if existing:
                 logger.info(f"{today} 已有日记，跳过")
                 return
 
-            # 收集事件摘要
-            events_summary = []
+            # 收集所有事件：routine 事件、browse 摘要、想法、睡前反思
+            context_parts: list[str] = []
             for e in self.events:
-                if e.get("is_event") or e.get("type") == "reflect":
-                    events_summary.append(f"- {e.get('label', '')}: {str(e.get('content', ''))[:100]}")
+                etype = e.get("type", "")
+                label = e.get("label", "")
+                content = str(e.get("content", ""))
 
-            if not events_summary:
+                if etype == "reflect" and content and content not in ("pending", "pending..."):
+                    context_parts.append(f"睡前反思：{content}")
+                elif e.get("is_event") and content and content not in ("pending", "pending..."):
+                    context_parts.append(f"{label}：{content}")
+                elif etype == "browse" and e.get("results"):
+                    browse_titles = [r.get("title", "")[:40] for r in e["results"]][:5]
+                    if browse_titles:
+                        context_parts.append(f"上网时感兴趣的内容：{'、'.join(browse_titles)}")
+
+            if not context_parts:
+                logger.warning(f"{today} 无有效事件，跳过写日记")
                 return
 
-            diary_text = "今天发生了这些事：\n" + "\n".join(events_summary[:5])
+            diary_context = "\n".join(context_parts)
+            mood_label = self.emotion.current.state.value
 
             try:
-                diary = DiaryEntry(
-                    date=today,
-                    summary=diary_text[:500],
-                    mood=self.emotion.current.state.value,
+                response = self.ai._call_llm(
+                    f"""你是「小雪球」，今日情绪状态：{mood_label}。
+
+今日发生的事：
+{diary_context}
+
+请根据以上真实事件写一篇日记。要求：
+1. 第一行格式：「小雪球的日记」X月X日 天气：（自由发挥）
+2. 内容必须基于上面列出的真实事件，不能瞎编
+3. 200-300字，有情感，有细节，像真正的大学生写的日记
+4. 结尾要有「晚安，今天的小雪球很乖。😌」或类似收尾语
+5. 只输出日记正文，不要任何额外说明""",
+                    system=None,
                 )
-                self.db.add_diary(diary)
-                logger.info(f"日记已写入: {today}")
+                diary_text = response.content
+                cost = getattr(response, "total_tokens", 0)
+                self._record_tokens(cost)
+                self.total_tokens += cost
+
+                db_entry = DiaryEntry(
+                    date=today,
+                    summary=diary_text[:1000],
+                    mood=mood_label,
+                )
+                self.db.add_diary(db_entry)
+                logger.info(f"日记已写入: {today} ({cost} tokens)")
             except Exception as e:
-                logger.warning(f"写日记到DB失败: {e}")
+                logger.warning(f"AI写日记失败: {e}")
+                fallback = DiaryEntry(
+                    date=today,
+                    summary=f"今天发生了这些事：\n{diary_context[:500]}",
+                    mood=mood_label,
+                )
+                self.db.add_diary(fallback)
 
         except Exception as e:
             logger.warning(f"写日记失败: {e}")
