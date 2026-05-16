@@ -82,6 +82,7 @@ class DailyLifeEngine:
         self.holiday = Holiday()
         self.emotion = emotion_system or get_emotion_system()
         self.current_slot: Optional[TimeSlot] = None
+        self._sim_date: str = ""  # override for past-day simulation
         self.schedule: list[dict[str, Any]] = []
         logger.info("DailyLifeEngine initialized")
 
@@ -123,7 +124,7 @@ class DailyLifeEngine:
         """加载未完成的事件链"""
         try:
             from datetime import date
-            today = sim_date if sim_date else date.today().isoformat()
+            today = date.today().isoformat()
             rows = self.db.get_conn().__enter__().execute(
                 "SELECT continuation FROM daily_schedule WHERE date = ? AND continuation != '' ORDER BY time_slot DESC LIMIT 3",
                 (today,)
@@ -136,7 +137,7 @@ class DailyLifeEngine:
         """保存事件链延续到明天"""
         try:
             from datetime import date
-            today = sim_date if sim_date else date.today().isoformat()
+            today = date.today().isoformat()
             with self.db.get_cursor() as cursor:
                 cursor.execute(
                     "UPDATE daily_schedule SET continuation = ? WHERE date = ? AND time_slot = (SELECT MAX(time_slot) FROM daily_schedule WHERE date = ?)",
@@ -176,7 +177,7 @@ class DailyLifeEngine:
 
             for item in browse_results:
                 record = BrowseRecord(
-                    timestamp=now_ts,
+                    timestamp=datetime.now().isoformat(),
                     source=item.source,
                     title=item.title,
                     summary=item.summary,
@@ -213,9 +214,9 @@ class DailyLifeEngine:
         logger.info(f"browse_and_think: browsed={total_browsed}, thoughts={thought_count}")
         return results
 
-    def write_diary(self, sim_date: str = "") -> str:
+    def write_diary(self) -> str:
         from memory import DiaryEntry
-        today = sim_date if sim_date else date.today().isoformat()
+        today = self._sim_date if self._sim_date else date.today().isoformat()
         try:
             thoughts = self.db.get_thoughts_by_date(today) if hasattr(self.db, "get_thoughts_by_date") else self.db.get_today_thoughts()
             browses = self.db.get_browses_by_date(today) if hasattr(self.db, "get_browses_by_date") else self.db.get_today_browses()
@@ -278,7 +279,7 @@ class DailyLifeEngine:
         except Exception as e:
             logger.error(f"Failed to save token usage: {e}")
 
-    def run_slot(self, slot: Optional[TimeSlot] = None, sim_date: str = "") -> dict[str, Any]:
+    def run_slot(self, slot: Optional[TimeSlot] = None) -> dict[str, Any]:
         slot = slot or self.get_time_slot()
         self.current_slot = slot
         self.emotion.step()
@@ -318,6 +319,7 @@ class DailyLifeEngine:
         return result
 
     def run_full_day(self, sim_date: str = "") -> list[dict[str, Any]]:
+        self._sim_date = sim_date
         today = sim_date if sim_date else date.today().isoformat()
         logger.info(f"=== Starting full day simulation: {today} ===")
         results: list[dict[str, Any]] = []
@@ -330,6 +332,24 @@ class DailyLifeEngine:
                 logger.error(f"Slot '{slot.label}' failed: {e}")
                 results.append({"slot": slot.label, "error": str(e)})
         logger.info(f"=== Full day simulation completed: {len(results)} slots ===")
+        # Save schedule to DB for timeline display
+        try:
+            sched = []
+            for r in results:
+                if r.get("slot"):
+                    sched.append({
+                        "time_slot": r.get("slot", ""),
+                        "activity_type": r.get("activity_type", ""),
+                        "label": r.get("slot", ""),
+                        "content": str(r.get("diary", ""))[:200] if r.get("diary") else "",
+                        "is_event": 0,
+                        "token_cost": r.get("token_usage", {}).get("total_tokens", 0),
+                    })
+            if sched:
+                self.db.save_schedule(today, sched)
+        except Exception as e:
+            logger.warning(f"Failed to save schedule: {e}")
+        self._sim_date = ""
         return results
 
 
