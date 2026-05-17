@@ -87,6 +87,9 @@ class Database:
                 check_same_thread=False,
                 detect_types=sqlite3.PARSE_DECLTYPES,
             )
+            # WAL 模式允许读写并发，busy_timeout 等待锁释放而非立即失败
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
             conn.row_factory = sqlite3.Row
             self._local.conn = conn
             self._local.thread_id = thread_id

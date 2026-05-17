@@ -59,6 +59,16 @@
         });
     });
 
+    // ── 手机子标签页切换（通知 / 朋友圈）──────────────
+    document.addEventListener("click", (e) => {
+        const btn = e.target.closest(".phone-nav-btn");
+        if (!btn) return;
+        const subTab = btn.dataset.phoneTab;
+        $$(".phone-nav-btn").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        loadPhoneSubTab(subTab);
+    });
+
     // ── API 调用 ────────────────────────────────────────────────
     async function api(path, options = {}) {
         try {
@@ -356,7 +366,80 @@
         cnt.innerHTML = html + ungroupedHtml;
     }
 
-    async function loadPhone() {
+    let phoneSubTab = "notifications";
+    async function loadPhoneSubTab(subTab) {
+        phoneSubTab = subTab;
+        const el = document.getElementById("phone-content");
+        if (!el) return;
+
+        if (subTab === "moments") {
+            el.innerHTML = '<p class="phone-placeholder">加载中...</p>';
+            try {
+                const data = await api("/api/moments");
+                if (!data.data || !data.data.length) {
+                    el.innerHTML = '<p class="phone-placeholder">朋友圈还没有动态</p>';
+                    return;
+                }
+                el.innerHTML = data.data.map((m) => {
+                    const liked = m.liked_by_xiaoqiu ? "&#x2764;&#xFE0F;" : "&#x1F90D;";
+                    const t = m.timestamp ? m.timestamp.replace("T", " ").slice(0, 16) : "";
+                    return `<div style="background:#1c1c1e;border-radius:12px;padding:14px;margin-bottom:12px">
+                        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                            <span style="font-size:18px">${m.friend_name === '小雨' ? '&#x1F338;' : m.friend_name === '阿泽' ? '&#x1F43E;' : m.friend_name === '小美' ? '&#x1F9D1;&#x200D;&#x1F3A8;' : m.friend_name === '班长林哥' ? '&#x1F9D4;&#x200D;&#x2642;&#xFE0F;' : '&#x1F970;'}</span>
+                            <div>
+                                <div style="color:#fff;font-size:13px;font-weight:600">${escHtml(m.friend_name)}</div>
+                                <div style="color:#aaa;font-size:11px">${escHtml(t)}</div>
+                            </div>
+                        </div>
+                        <div style="color:#ddd;font-size:13px;line-height:1.6;margin-bottom:8px">${escHtml(m.content)}</div>
+                        <div style="display:flex;gap:16px;color:#888;font-size:12px">
+                            <span class="moments-like" data-id="${m.id}" data-liked="${m.liked_by_xiaoqiu}" style="cursor:pointer">${liked} ${m.likes}</span>
+                            <span class="moments-comment" data-id="${m.id}" style="cursor:pointer">&#x1F4AC; 评论</span>
+                        </div>
+                        <div class="moments-comment-area" id="mc-${m.id}" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid #333">
+                            <div class="moments-comment-list" id="mcl-${m.id}" style="margin-bottom:6px"></div>
+                        </div>
+                    </div>`;
+                }).join("");
+                // 点赞按钮
+                $$(".moments-like").forEach((btn) => {
+                    btn.addEventListener("click", async () => {
+                        const id = btn.dataset.id;
+                        try {
+                            await api(`/api/moments/${id}/like`, { method: "POST" });
+                            loadPhoneSubTab("moments");
+                        } catch(e) { console.error(e); }
+                    });
+                });
+                // 评论按钮
+                $$(".moments-comment").forEach((btn) => {
+                    btn.addEventListener("click", async () => {
+                        const id = btn.dataset.id;
+                        const area = document.getElementById(`mc-${id}`);
+                        const list = document.getElementById(`mcl-${id}`);
+                        if (!area || area.style.display === "block") {
+                            area.style.display = "none";
+                            return;
+                        }
+                        area.style.display = "block";
+                        if (list) list.innerHTML = '<div style="color:#666;font-size:11px">加载中...</div>';
+                        try {
+                            const cdata = await api(`/api/moments/${id}/comments`);
+                            if (list) {
+                                list.innerHTML = (cdata.data || []).map((c) =>
+                                    `<div style="color:#aaa;font-size:12px;margin-bottom:4px"><b>${escHtml(c.commenter)}:</b> ${escHtml(c.content)}</div>`
+                                ).join("") || '<div style="color:#666;font-size:11px">暂无评论</div>';
+                            }
+                        } catch(e) { if (list) list.innerHTML = '<div style="color:#666;font-size:11px">加载失败</div>'; }
+                    });
+                });
+            } catch(e) {
+                el.innerHTML = '<p class="phone-placeholder">加载失败</p>';
+            }
+            return;
+        }
+
+        // 通知页（原 loadPhone 逻辑）
         var data;
         try {
             data = await api("/api/notifications");
@@ -372,13 +455,18 @@
             return;
         }
         el.innerHTML = data.data.map(function(n) {
-            var clickable = n.url ? ' onclick="window.open(\'' + escHtml(n.url) + '\', \'_blank\')" style="cursor:pointer"' : '';
+            var safeUrl = isSafeUrl(n.url);
+            var clickable = safeUrl ? ' onclick="window.open(\'' + escHtml(n.url) + '\', \'_blank\')" style="cursor:pointer"' : '';
             return '<div' + clickable + ' style="background:#1c1c1e;border-radius:12px;padding:12px;margin-bottom:8px;border-left:3px solid ' + (n.color || '#5a9eff') + '">' +
                 '<div style="color:#888;font-size:11px">' + escHtml(n.app) + '</div>' +
                 '<div style="color:#fff;margin:4px 0;font-size:13px">' + escHtml(n.title) + '</div>' +
                 '<div style="color:#aaa;font-size:11px">' + escHtml(n.time || '') + '</div>' +
                 '</div>';
         }).join("");
+    }
+
+    async function loadPhone() {
+        await loadPhoneSubTab(phoneSubTab);
     }
 
     // ── 图表 ─────────────────────────────────────────────────
@@ -515,6 +603,10 @@
             });
             addChatMsg("bot", resp.reply);
             state.chatHistory.push({ role: "assistant", content: resp.reply });
+            // Keep only last 6 messages to prevent unbounded growth
+            if (state.chatHistory.length > 6) {
+                state.chatHistory = state.chatHistory.slice(-6);
+            }
         } catch (e) {
             addChatMsg("bot", `抱歉出了点问题: ${e.message}`);
         }
@@ -655,6 +747,11 @@
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;")
             .replace(/"/g, "&quot;");
+    }
+
+    function isSafeUrl(url) {
+        if (!url) return false;
+        return /^https?:\/\//i.test(url.trim());
     }
 
     function formatTime(ts) {

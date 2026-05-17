@@ -21,10 +21,18 @@ from logger import get_logger
 
 logger = get_logger(__name__)
 
-client = openai.OpenAI(
-    api_key=config.require_api_key(),
-    base_url=config.DEEPSEEK_BASE_URL,
-)
+_client: Optional[openai.OpenAI] = None
+
+
+def _get_client() -> openai.OpenAI:
+    """延迟初始化 OpenAI 客户端，避免模块导入时就检查 API Key。"""
+    global _client
+    if _client is None:
+        _client = openai.OpenAI(
+            api_key=config.require_api_key(),
+            base_url=config.DEEPSEEK_BASE_URL,
+        )
+    return _client
 
 
 @dataclass
@@ -200,7 +208,7 @@ class CyberHuman:
         for attempt in range(max_retries):
             try:
                 start = time.monotonic()
-                completion = client.chat.completions.create(
+                completion = _get_client().chat.completions.create(
                     model=config.DEEPSEEK_MODEL,
                     messages=messages,
                     temperature=config.LLM_TEMPERATURE,

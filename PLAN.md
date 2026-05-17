@@ -173,9 +173,15 @@ T9 Docker ────→ T10 README ─────────┘
 
 ## 六、验收标准
 
-- [ ] `git diff` 无任何硬编码 API Key
-- [ ] 所有 `print()` 替换为日志调用
-- [ ] `python main.py --auto` 无报错退出
-- [ ] `python web.py` 可正常启动，Flask 服务可访问
-- [ ] Docker build 成功，无报错
-- [ ] 所有 Python 文件通过基础语法检查
+- [x] `.env` 不在 git 追踪中（已通过 `.gitignore` 排除）
+- [x] `.env.example` 已创建（新用户可基于模板创建 `.env`）
+- [x] `.dockerignore` 已创建（敏感文件不会进入 Docker 镜像）
+- [x] 所有 Python 文件无 bare `except:` 语句
+- [x] `cyber_human.py` 使用延迟初始化（API Key 检查延后到首次使用时）
+- [x] `health_check.py` 使用跨平台路径配置
+- [ ] `python main.py --auto` 无报错退出（需实际运行验证）
+- [ ] `python web.py` 可正常启动，Flask 服务可访问（需实际运行验证）
+- [ ] `python main.py --chat` 对话模式正常（需实际运行验证）
+- [ ] 所有 Python 文件通过基础语法检查（`python -m py_compile`）
+- [ ] Docker build 成功（需 Docker 环境）
+- [ ] Docker health check 通过

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import copy
 import random
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -63,6 +64,17 @@ class EmotionSystem:
     current: Emotion = field(default_factory=Emotion)
     history: list[Emotion] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        # 尝试从天气模块加载情绪影响
+        try:
+            from weather import Weather
+            w = Weather()
+            modifier = w.get_mood_modifier()
+            self.current.intensity = max(0.1, min(1.0, self.current.intensity + modifier))
+            logger.debug(f"Weather mood modifier applied: {modifier}")
+        except Exception:
+            pass
+
     _event_effects: Dict[str, float] = field(default_factory=lambda: {
         "美食": 0.15,
         "猫": 0.15,
@@ -103,22 +115,13 @@ class EmotionSystem:
 
     def get_time_slot(self) -> str:
         hour = datetime.now().hour
-        if 6 <= hour < 9:
-            return "morning"
-        elif 9 <= hour < 11:
-            return "morning"
-        elif 11 <= hour < 14:
-            return "lunch"
-        elif 14 <= hour < 17:
-            return "afternoon"
-        elif 17 <= hour < 19:
-            return "afternoon"
-        elif 19 <= hour < 21:
-            return "dinner"
-        elif 21 <= hour < 23:
-            return "evening"
-        else:
-            return "night"
+        if 6 <= hour < 11:    return "morning"
+        elif 11 <= hour < 14: return "lunch"
+        elif 14 <= hour < 17: return "afternoon"
+        elif 17 <= hour < 19: return "dinner"
+        elif 19 <= hour < 21: return "evening"
+        elif 21 <= hour < 23: return "night"
+        else:                  return "night"
 
     def apply_time_effect(self) -> None:
         slot = self.get_time_slot()
@@ -147,7 +150,7 @@ class EmotionSystem:
         )
         self.current.intensity = max(0.1, min(1.0, self.current.intensity + random.uniform(-0.05, 0.05)))
         self.current.timestamp = datetime.now()
-        self.history.append(self.current)
+        self.history.append(copy.deepcopy(self.current))
         logger.debug(f"Emotion step: state={self.current.state.value}, intensity={self.current.intensity:.2f}")
 
     def apply_browse_result(self, title: str, summary: str) -> None:

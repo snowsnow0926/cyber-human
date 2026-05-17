@@ -44,7 +44,7 @@ class Weather:
                 }
                 self.cache = weather
                 return weather
-        except:
+        except Exception:
             pass
         # Fallback: random weather
         weather = random.choice(["晴天", "多云", "阴天", "小雨", "微风"])

@@ -16,21 +16,31 @@ from threading import Thread
 from typing import Any, Callable, Optional
 
 # 修复 Flask-SocketIO 与 Flask 3.1+ 的兼容性问题（ctx.session 只读）
+# 仅在首次启动时修补一次，且有完整性保护
 import flask_socketio as _fso
 import inspect as _ins
 _sfp = _ins.getsourcefile(_fso)
-with open(_sfp, encoding="utf-8") as _f:
-    _sl = _f.readlines()
-for _i, _l in enumerate(_sl):
-    if "ctx.session = session_obj" in _l and _l.strip().startswith("#"):
-        break
-else:
-    for _i, _l in enumerate(_sl):
-        if "ctx.session = session_obj" in _l:
-            _sl[_i] = "                # ctx.session is read-only in Flask 3.1+\n"
+_patched_marker = _sfp + ".session_patch_done"
+import os as _os
+if not _os.path.exists(_patched_marker):
+    try:
+        with open(_sfp, encoding="utf-8") as _f:
+            _sl = _f.readlines()
+        _modified = False
+        for _i, _l in enumerate(_sl):
+            if "ctx.session = session_obj" in _l:
+                if _l.strip().startswith("#"):
+                    break
+                _sl[_i] = "                # ctx.session is read-only in Flask 3.1+\n"
+                _modified = True
+                break
+        if _modified:
             with open(_sfp, "w", encoding="utf-8") as _f:
                 _f.writelines(_sl)
-            break
+            with open(_patched_marker, "w") as _f:
+                _f.write("1")
+    except Exception:
+        pass
 
 from flask import (
     Flask,
@@ -52,7 +62,8 @@ app.config["SECRET_KEY"] = os.getenv(
     "FLASK_SECRET_KEY",
     "cyber-human-default-secret-change-in-production"
 )
-CORS(app)
+_cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:5010,http://127.0.0.1:5010").split(",")
+CORS(app, origins=_cors_origins)
 socketio = SocketIO(
     app,
     cors_allowed_origins="*",
@@ -243,7 +254,10 @@ def api_timeline() -> Any:
 def api_all_thoughts() -> Any:
     from memory import get_db
     db = get_db()
-    limit = int(request.args.get("limit", 100))
+    try:
+        limit = int(request.args.get("limit", "100"))
+    except (ValueError, TypeError):
+        limit = 100
     items = db.get_all_thoughts(limit)
     return jsonify({"data": items, "total": len(items)})
 
@@ -356,13 +370,13 @@ def api_profile() -> Any:
         dc = len(db.get_all_diary())
         kc = len(db.get_all_knowledge())
         kc_count = kc
-    except:
+    except Exception:
         bc = tc = dc = kc_count = 0
 
     try:
         stats_data = db.get_stats()
         kstats = db.get_knowledge_stats()
-    except:
+    except Exception:
         stats_data = {}
         kstats = {}
 
@@ -370,7 +384,7 @@ def api_profile() -> Any:
         # 最近想法
         recent = db.get_all_thoughts(limit=5)
         recent_thoughts = [{"thought": t.get("thought","")[:200], "time": t.get("timestamp","")} for t in recent]
-    except:
+    except Exception:
         recent_thoughts = []
 
     mood = emotion.current.state.value if emotion.current else "\u5e73\u9759"
@@ -496,6 +510,62 @@ def api_emotion_event() -> Any:
         emotion.apply_event(event)
         socketio.emit("emotion_update", emotion.to_dict(), room="web")
     return jsonify(emotion.to_dict())
+
+
+@app.route("/api/moments")
+@make_response
+def api_moments() -> Any:
+    """获取朋友圈动态列表"""
+    from friends import get_friends_system
+    fs = get_friends_system()
+    try:
+        limit = int(request.args.get("limit", "30"))
+    except (ValueError, TypeError):
+        limit = 30
+    return jsonify({"data": fs.get_all_moments(limit), "total": 0})
+
+
+@app.route("/api/moments/<int:moment_id>/like", methods=["POST"])
+@make_response
+def api_moment_like(moment_id: int) -> Any:
+    """切换小雪球对动态的点赞状态"""
+    from friends import get_friends_system
+    fs = get_friends_system()
+    liked = fs.toggle_like(moment_id)
+    return jsonify({"success": True, "liked": liked})
+
+
+@app.route("/api/moments/<int:moment_id>/comments")
+@make_response
+def api_moment_comments(moment_id: int) -> Any:
+    """获取动态的评论列表"""
+    from friends import get_friends_system
+    fs = get_friends_system()
+    return jsonify({"data": fs.get_comments(moment_id)})
+
+
+@app.route("/api/moments/<int:moment_id>/comment", methods=["POST"])
+@make_response
+def api_moment_comment(moment_id: int) -> Any:
+    """小雪球发表评论"""
+    from friends import get_friends_system
+    fs = get_friends_system()
+    data = request.get_json() or {}
+    content = data.get("content", "").strip()
+    if not content:
+        return jsonify({"error": "empty comment"}), 400
+    fs.add_comment(moment_id, content)
+    return jsonify({"success": True})
+
+
+@app.route("/api/moments/generate", methods=["POST"])
+@make_response
+def api_generate_moments() -> Any:
+    """手动生成朋友圈动态（供控制面板调用）"""
+    from friends import get_friends_system
+    fs = get_friends_system()
+    moments = fs.generate_daily_moments(count=3)
+    return jsonify({"success": True, "count": len(moments)})
 
 
 @app.route("/api/control/clear_browses", methods=["POST"])

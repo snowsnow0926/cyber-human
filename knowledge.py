@@ -45,16 +45,20 @@ class KnowledgeExtractor:
 """
 
     def __init__(self, client: Any = None) -> None:
-        self._client = client
+        self._client = client  # None = use lazy singleton below
+
+    def _ensure_client(self) -> Any:
+        if self._client is None:
+            import openai as _openai
+            self._client = _openai.OpenAI(
+                api_key=config.require_api_key(),
+                base_url=config.DEEPSEEK_BASE_URL,
+            )
+        return self._client
 
     def extract(self, content: str) -> list[KnowledgeItem]:
         try:
-            import openai
-            client = self._client or openai.OpenAI(
-                api_key=config.DEEPSEEK_API_KEY,
-                base_url=config.DEEPSEEK_BASE_URL,
-            )
-            response = client.chat.completions.create(
+            response = self._ensure_client().chat.completions.create(
                 model=config.DEEPSEEK_MODEL,
                 messages=[
                     {"role": "system", "content": self.SYSTEM_PROMPT},

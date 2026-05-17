@@ -17,6 +17,68 @@ from memory_core import get_consolidation
 logger = get_logger(__name__)
 
 
+# ── 天气感知模板 ──────────────────────────────────────────────
+def _get_weather_templates(weather_condition: str) -> dict[str, list[str]]:
+    """根据天气返回增强后的活动模板。"""
+    w = weather_condition.lower()
+    is_rainy = any(k in w for k in ["雨", "阴", "雪", "雾"])
+    is_sunny = any(k in w for k in ["晴", "sunny", "clear"])
+    is_hot = "热" in w or "高温" in w
+    is_cold = "冷" in w or "寒" in w
+
+    templates = {}
+
+    if is_rainy:
+        templates["起床"] = [
+            "外面雨好大啊……真的好不想起来", "雨声滴滴答答的，想再赖会儿床",
+            "下雨天睡得好舒服……", "听着雨声，迷迷糊糊又睡着了",
+        ]
+        templates["出门散步"] = [
+            "下着雨呢，还是不出去了，在窗边看雨", "雨太大了，打消了出门的念头",
+            "算了雨天不方便，就在宿舍待着吧",
+        ]
+        templates["下午茶/摸鱼"] = [
+            "下雨天最适合追剧了，窝在被子里超舒服", "听着窗外的雨声，喝杯热可可",
+            "雨天就适合发呆，什么都不想",
+        ]
+    elif is_sunny:
+        templates["起床"] = [
+            "阳光从窗帘缝隙照进来，好舒服~", "今天天气超好！一醒过来心情就很好",
+            "阳光明媚，起床都有动力了",
+        ]
+        templates["出门散步"] = [
+            "天气好好！出去走走晒晒太阳", "今天阳光明媚，很适合出门逛逛",
+            "趁着好天气去校门口买了杯奶茶",
+        ]
+        templates["下午茶/摸鱼"] = [
+            "阳光正好，去校园里散散步", "这么好的天气坐在外面发呆太舒服了",
+        ]
+    else:
+        templates = {}
+
+    if is_hot:
+        templates.setdefault("午餐时间", []).extend([
+            "太热了没什么胃口，吃点清淡的", "热死了，随便吃点水果算了",
+        ])
+    if is_cold:
+        templates.setdefault("出门散步", []).extend([
+            "今天好冷啊……裹严实了才敢出门", "冷风中走了一会儿就回来了",
+        ])
+
+    return templates
+
+
+def _get_weather_for_simulation() -> str:
+    """获取模拟当日的天气（带缓存）。"""
+    try:
+        from weather import Weather
+        w = Weather()
+        result = w.get_today()
+        return result.get("condition", "")
+    except Exception:
+        return ""
+
+
 TIME_BLOCKS = [
     {"time": "08:00", "label": "起床",         "type": "routine"},
     {"time": "08:30", "label": "早餐",          "type": "routine"},
@@ -79,6 +141,7 @@ class DailyLifeEngine:
         self._block_index = 0
         self._sim_date: str = ""
         self._seen_titles: set[str] = set()
+        self._weather: str = ""
         logger.info("DailyLifeEngine initialized (v0.7 merge)")
 
     def _today(self, sim_date: str = "") -> str:
@@ -135,7 +198,7 @@ class DailyLifeEngine:
                     conn.execute(
                         """INSERT INTO daily_schedule
                            (date, time_slot, activity_type, label, content, is_event, created_at)
-                           VALUES (?, ?, pending, ?, pending, 0, ?)""",
+                           VALUES (?, ?, 'pending', ?, 'pending', 0, ?)""",
                         (today, time_slot, label, datetime.now().isoformat()),
                     )
         except Exception as e:
@@ -150,7 +213,7 @@ class DailyLifeEngine:
                     (today, time_slot),
                 ).fetchone()
                 return row is not None and row[0] != "pending"
-        except:
+        except Exception:
             return False
 
     def run_full_day(self, sim_date: str = "") -> list[dict]:
@@ -174,6 +237,12 @@ class DailyLifeEngine:
         self.events = []
         self.total_tokens = 0
         self._block_index = 0
+        self._weather = _get_weather_for_simulation()
+
+        # 天气情绪影响
+        if self._weather:
+            self.emotion.apply_event(f"天气：{self._weather}")
+            logger.info(f"今日天气: {self._weather}")
 
         # 模拟模式：执行所有区块（实时模式走 cron 定时，模拟模式走这里）
         for block in TIME_BLOCKS:
@@ -181,7 +250,15 @@ class DailyLifeEngine:
             if result:
                 self.events.append(result)
 
-        # 模拟结束：写日记 + 记忆巩固
+        # 模拟结束：朋友圈动态 + 写日记 + 记忆巩固
+        try:
+            from friends import get_friends_system
+            friends_sys = get_friends_system()
+            moments = friends_sys.generate_daily_moments(count=random.randint(2, 4), sim_date=sim_date)
+            logger.info(f"朋友圈：生成了 {len(moments)} 条动态")
+        except Exception as e:
+            logger.warning(f"朋友圈生成失败: {e}")
+
         self._write_diary(sim_date)
         try:
             mc = get_consolidation()
@@ -221,18 +298,34 @@ class DailyLifeEngine:
         try:
             roll = random.random()
 
+            # 起床时段：50% 模板 / 50% AI 生成（天气感知）
+            if label == "起床":
+                if roll < 0.50:
+                    content = self._pick_template(label)
+                    self._save_slot(time_slot, "routine", label, content,
+                                    is_event=0, token_cost=0, sim_date=sim_date)
+                    logger.debug(f"  起床模板: {content}")
+                    return {"time": time_slot, "label": label, "content": content,
+                            "type": "routine", "is_event": False}
+                else:
+                    content, cost = self._generate_wakeup_event()
+                    self._save_slot(time_slot, "routine", label, content,
+                                    is_event=1, event_type="wakeup", token_cost=cost,
+                                    sim_date=sim_date)
+                    logger.info(f"  [起床AI事件] {content[:80]}...")
+                    self.total_tokens += cost
+                    return {"time": time_slot, "label": label, "content": content,
+                            "type": "event", "is_event": True}
+
+            # 其他 routine 时段：70% 模板 / 30% AI 生成
             if roll < 0.70:
-                # 70% 模板
-                templates = ROUTINE_TEMPLATES.get(label, ["没什么特别的"])
-                content = random.choice(templates)
+                content = self._pick_template(label)
                 self._save_slot(time_slot, "routine", label, content,
                                 is_event=0, token_cost=0, sim_date=sim_date)
                 logger.debug(f"  模板事件: {content}")
                 return {"time": time_slot, "label": label, "content": content,
                         "type": "routine", "is_event": False}
-
             else:
-                # 30% AI 生成小事件
                 content, cost = self._generate_mini_event(label)
                 self._save_slot(time_slot, "routine", label, content,
                                 is_event=1, event_type="small", token_cost=cost,
@@ -248,8 +341,34 @@ class DailyLifeEngine:
                             sim_date=sim_date)
             return None
 
+    def _pick_template(self, label: str) -> str:
+        """从通用模板和天气增强模板中随机选择一个。"""
+        base = ROUTINE_TEMPLATES.get(label, ["没什么特别的"])
+        weather_extra = _get_weather_templates(self._weather).get(label, [])
+        pool = base + weather_extra
+        return random.choice(pool) if pool else random.choice(base)
+
+    def _generate_wakeup_event(self) -> tuple[str, int]:
+        """生成起床小事件，带天气信息。"""
+        weather_info = f"今天的天气是「{self._weather}」。" if self._weather else ""
+        prompt = f"""现在是早上起床时间。{weather_info}
+请用第一人称写一段起床时的小故事（2-3句话）。
+可以是：赖床挣扎、做了个梦、醒来第一反应、想起今天有什么安排等。
+要有画面感，符合一个19岁女大学生的真实状态。"""
+        try:
+            response = self.ai._call_llm(prompt, system=None)
+            content = response.content
+            cost = response.total_tokens if hasattr(response, "total_tokens") else 100
+            self._record_tokens(cost)
+            return content, cost
+        except Exception as e:
+            logger.warning(f"起床事件生成失败: {e}")
+            return "迷迷糊糊地醒了，躺在床上又发了会儿呆...", 50
+
     def _generate_mini_event(self, label: str) -> tuple[str, int]:
-        prompt = f"现在是{label}的时间。发生了一件日常生活里的小事，用第一人称简单说说发生了什么，你是什么感觉。（2-3句话）"
+        weather_info = f"今天的天气是「{self._weather}」。" if self._weather else ""
+        prompt = f"""现在是{label}的时间。{weather_info}
+发生了一件日常生活里的小事，用第一人称简单说说发生了什么，你是什么感觉。（2-3句话）"""
         try:
             response = self.ai._call_llm(prompt, system=None)
             content = response.content
