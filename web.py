@@ -331,7 +331,10 @@ def api_notifications() -> Any:
     """手机通知栏数据"""
     from memory import get_db
     db = get_db()
-    brows = db.get_today_browses()
+    try:
+        brows = db.get_today_browses()
+    except Exception:
+        brows = []
     app_colors = {
         "B站热门": "#fb7299", "B站游戏": "#fb7299",
         "百度热搜": "#4e6ef2", "抖音热搜": "#00d4b2",
@@ -343,11 +346,12 @@ def api_notifications() -> Any:
         title = b.get("title", "")[:60]
         if len(b.get("title", "")) > 60:
             title += "..."
+        ts = b.get("timestamp", "")
         notifications.append({
             "app": src,
             "title": title,
             "url": b.get("url", ""),
-            "time": (b.get("timestamp", ""))[11:16] if len(b.get("timestamp", "")) >= 16 else "",
+            "time": ts[11:16] if len(ts) >= 16 else "",
             "color": app_colors.get(src, "#5a9eff")
         })
     return jsonify({"data": notifications, "total": len(notifications)})

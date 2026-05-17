@@ -51,6 +51,7 @@ class FriendsSystem:
         self.db = db or get_db()
         self.friends = DEFAULT_FRIENDS
         logger.info("FriendsSystem initialized")
+        self._seed_initial_moments()
 
     def _ensure_tables(self) -> None:
         """确保朋友圈相关表存在。"""
@@ -78,6 +79,48 @@ class FriendsSystem:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_moments_friend ON friend_moments(friend_name)")
         except Exception as e:
             logger.error(f"Failed to create friends tables: {e}")
+
+    def _seed_initial_moments(self) -> None:
+        """首次启动时自动生成历史朋友圈动态，确保 UI 不空。"""
+        self._ensure_tables()
+        try:
+            with self.db.get_cursor() as cursor:
+                count = cursor.execute("SELECT COUNT(*) FROM friend_moments").fetchone()[0]
+            if count > 0:
+                return
+        except Exception:
+            return
+
+        from datetime import timedelta
+        now = datetime.now()
+        seed_templates = [
+            ("小雨", "今天在图书馆泡了一下午，看到一本超好看的推理小说！"),
+            ("阿泽", "博美犬今天又拆家了！！我已经麻了......"),
+            ("小美", "新买的眼影盘到了，这个颜色绝了！"),
+            ("室友阿月", "食堂的红烧狮子头居然只要5块钱，太良心了"),
+            ("班长林哥", "期末复习周真的好累，但一定要撑住！"),
+            ("小雨", "在楼下发现一只超可爱的小橘猫，求收养~"),
+            ("阿泽", "今天打了三个小时游戏，罪恶感满满"),
+            ("小美", "烘焙课做的曲奇成功了！配方分享给大家"),
+            ("室友阿月", "终于周末了！打算睡到自然醒"),
+            ("班长林哥", "社团活动策划案终于写完了，累死"),
+        ]
+
+        for i, (friend_name, content) in enumerate(seed_templates):
+            ts = (now - timedelta(days=i // 2 + 1, hours=i * 2)).strftime("%Y-%m-%dT%H:%M:%S")
+            likes = random.randint(0, 12)
+            try:
+                with self.db.get_conn() as conn:
+                    conn.execute(
+                        """INSERT INTO friend_moments
+                           (friend_name, content, timestamp, likes, liked_by_xiaoqiu)
+                           VALUES (?, ?, ?, ?, 0)""",
+                        (friend_name, content, ts, likes),
+                    )
+            except Exception as e:
+                logger.debug(f"Seed moment failed: {e}")
+
+        logger.info(f"Seeded {len(seed_templates)} initial friend moments")
 
     def generate_daily_moments(self, count: int = 3, sim_date: str = "") -> list[Moment]:
         """

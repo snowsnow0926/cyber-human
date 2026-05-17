@@ -123,27 +123,32 @@
     }
 
     async function loadThoughts() {
-        const data = await api("/api/today/thoughts");
         const el = $("#thoughts-list");
         if (!el) return;
-        if (!data.data.length) {
-            el.innerHTML = '<div class="card"><div class="card-body">今日还没有想法</div></div>';
-            return;
-        }
-        el.innerHTML = data.data.map((item) => {
-            const impClass = item.importance >= 7 ? "tag-importance-high"
-                : item.importance >= 4 ? "tag-importance-mid" : "tag-importance-low";
-            return `
-                <div class="card">
-                    <div class="card-meta">${item.source} · ${formatTime(item.timestamp)} · ${escHtml(item.emotion || "平静")}</div>
-                    <div class="card-body">${escHtml(item.thought)}</div>
-                    <div class="card-footer">
-                        <span class="tag ${impClass}">重要度 ${item.importance}/10</span>
-                        <span class="tag">${escHtml(item.memory_tier === "short" ? "短期" : item.memory_tier === "mid" ? "中期" : "长期")}</span>
+        el.innerHTML = '<div class="card"><div class="card-body">加载中...</div></div>';
+        try {
+            const data = await api("/api/today/thoughts");
+            if (!data.data || !data.data.length) {
+                el.innerHTML = '<div class="card"><div class="card-body">今日还没有想法</div></div>';
+                return;
+            }
+            el.innerHTML = data.data.map((item) => {
+                const impClass = item.importance >= 7 ? "tag-importance-high"
+                    : item.importance >= 4 ? "tag-importance-mid" : "tag-importance-low";
+                return `
+                    <div class="card">
+                        <div class="card-meta">${item.source} · ${formatTime(item.timestamp)} · ${escHtml(item.emotion || "平静")}</div>
+                        <div class="card-body">${escHtml(item.thought)}</div>
+                        <div class="card-footer">
+                            <span class="tag ${impClass}">重要度 ${item.importance}/10</span>
+                            <span class="tag">${escHtml(item.memory_tier === "short" ? "短期" : item.memory_tier === "mid" ? "中期" : "长期")}</span>
+                        </div>
                     </div>
-                </div>
-            `;
-        }).join("");
+                `;
+            }).join("");
+        } catch (e) {
+            el.innerHTML = `<div class="card"><div class="card-body" style="color:#e74c3c">加载失败: ${escHtml(e.message)}</div></div>`;
+        }
     }
 
     async function loadDiary() {
@@ -440,15 +445,13 @@
         }
 
         // 通知页（原 loadPhone 逻辑）
-        var data;
+        // el 已在上方（第372行）通过 const 声明，此处直接复用
         try {
             data = await api("/api/notifications");
         } catch(e) {
-            var el = document.getElementById("phone-content");
             if (el) el.innerHTML = '<p class="phone-placeholder">加载失败</p>';
             return;
         }
-        var el = document.getElementById("phone-content");
         if (!el) return;
         if (!data.data || !data.data.length) {
             el.innerHTML = '<p class="phone-placeholder">小雪球的手机还没收到推送</p>';
@@ -703,34 +706,39 @@
 
             socket.on("connect", () => {
                 state.socketConnected = true;
-                console.log("Socket.IO connected");
+                console.log("[WS] 已连接 ✅");
             });
 
             socket.on("disconnect", () => {
                 state.socketConnected = false;
-                console.log("Socket.IO disconnected");
+                console.log("[WS] 连接已断开");
             });
 
             socket.on("diary_update", (data) => {
+                console.log("[WS] diary_update →", data);
                 logControl(`收到日记更新: ${data.date}`, "success");
                 if (state.currentTab === "diary") loadDiary();
             });
 
             socket.on("thought_update", (data) => {
+                console.log("[WS] thought_update →", data);
                 if (state.currentTab === "thoughts") loadThoughts();
             });
 
             socket.on("emotion_update", (data) => {
+                console.log("[WS] emotion_update →", data);
                 const badge = $("#emotion-badge");
                 if (badge) badge.textContent = data.current.emoji;
                 if (state.currentTab === "stats") loadStats();
             });
 
             socket.on("sim_complete", (data) => {
+                console.log("[WS] sim_complete →", data);
                 logControl(`模拟完成！共 ${data.slots} 个时段`, "success");
             });
 
             socket.on("sim_error", (data) => {
+                console.log("[WS] sim_error →", data);
                 logControl(`模拟错误: ${data.error}`, "error");
             });
 

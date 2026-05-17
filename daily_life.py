@@ -452,28 +452,33 @@ class DailyLifeEngine:
                 self.db.add_browse(record)
 
                 # ===== 2. 判断是否感兴趣 =====
-                is_interesting = should_be_interested(br.title, br.summary)
+                try:
+                    is_interesting = should_be_interested(br.title, br.summary)
+                except Exception as e:
+                    logger.debug(f"兴趣判断异常，默认感兴趣: {e}")
+                    is_interesting = True
 
                 if is_interesting:
-                    # 感兴趣：AI生成想法（耗token）
                     try:
                         thought_text, importance = self.ai.think_about(
                             content=f"{br.title}。{br.summary}",
                             source=display_name,
                         )
-                        thought_ts = ts  # 与浏览记录时间戳一致
-                        thought = Thought(
-                            timestamp=thought_ts,
-                            source=f"{display_name} - {br.title[:30]}",
-                            thought=thought_text,
-                            importance=importance,
-                            emotion=self.emotion.current.state.value,
-                        )
-                        self.db.add_thought(thought)
-                        total_cost += 100
-                        results.append({"title": br.title, "thought": thought_text[:100]})
                     except Exception as e:
-                        logger.warning(f"思考失败: {e}")
+                        logger.warning(f"思考生成失败，保存 fallback 想法: {e}")
+                        thought_text = f"看到「{br.title}」，虽然挺感兴趣的但没来得及细想"
+                        importance = 5
+                    thought_ts = ts
+                    thought = Thought(
+                        timestamp=thought_ts,
+                        source=f"{display_name} - {br.title[:30]}",
+                        thought=thought_text,
+                        importance=importance,
+                        emotion=self.emotion.current.state.value,
+                    )
+                    self.db.add_thought(thought)
+                    total_cost += 100
+                    results.append({"title": br.title, "thought": thought_text[:100]})
                 else:
                     # 不感兴趣：只记录想法为"不感兴趣"，不调AI（0 token）
                     thought_ts = ts
