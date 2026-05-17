@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""browser.py - 赛博人类浏览器模块 (HTTP API)"""
+"""
+browser.py - 赛博人类浏览器模块 v2.0
+HTTP API 抓取，支持多平台
+"""
 
 from __future__ import annotations
 
 import random
 import re
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Optional
 
 import requests
 from bs4 import BeautifulSoup
@@ -37,7 +40,6 @@ class BrowseResult:
 
 
 class HTTPBrowser:
-    """通过 HTTP API 抓取内容的浏览器"""
 
     SOURCE_CONFIGS = {
         "bilibili": {
@@ -74,18 +76,15 @@ class HTTPBrowser:
 
     def __init__(self) -> None:
         self.session = requests_session
-        logger.info("HTTPBrowser initialized")
+        logger.info("HTTPBrowser v2.0 initialized")
 
-    def fetch(
-        self, source: str, timeout: int = 10
-    ) -> list[BrowseResult]:
+    def fetch(self, source: str, timeout: int = 10) -> list[BrowseResult]:
         cfg = self.SOURCE_CONFIGS.get(source)
         if not cfg:
             logger.warning(f"Unknown source: {source}")
             return []
 
         try:
-            logger.debug(f"Fetching {source}: {cfg['url']}")
             resp = self.session.get(cfg["url"], timeout=timeout)
             resp.raise_for_status()
             parser = getattr(self, cfg["parser"])
@@ -100,7 +99,7 @@ class HTTPBrowser:
             logger.error(f"Unexpected error fetching {source}: {e}")
         return []
 
-    def _parse_bilibili(self, resp, source):
+    def _parse_bilibili(self, resp, source) -> list[BrowseResult]:
         try:
             data = resp.json().get("data", {}).get("list", [])
             return [
@@ -117,7 +116,8 @@ class HTTPBrowser:
         except Exception as e:
             logger.warning(f"Failed to parse bilibili response: {e}")
             return []
-    def _parse_baidu(self, resp, source):
+
+    def _parse_baidu(self, resp, source) -> list[BrowseResult]:
         try:
             soup = BeautifulSoup(resp.text, "html.parser")
             items = soup.select(".category-wrap_iQLoo")[:10]
@@ -140,7 +140,8 @@ class HTTPBrowser:
         except Exception as e:
             logger.warning(f"Failed to parse baidu response: {e}")
             return []
-    def _parse_zhihu(self, resp, source):
+
+    def _parse_zhihu(self, resp, source) -> list[BrowseResult]:
         try:
             data = resp.json().get("data", [])
             return [
@@ -158,7 +159,7 @@ class HTTPBrowser:
             logger.warning(f"Failed to parse zhihu response: {e}")
             return []
 
-    def _parse_rss(self, resp, source):
+    def _parse_rss(self, resp, source) -> list[BrowseResult]:
         try:
             soup = BeautifulSoup(resp.text, "lxml-xml")
             items = soup.find_all("item")[:10]
@@ -179,8 +180,7 @@ class HTTPBrowser:
             logger.warning(f"Failed to parse RSS response: {e}")
             return []
 
-    def _parse_xiaohongshu(self, resp, source):
-        """解析小红书探索页，提取标题文本"""
+    def _parse_xiaohongshu(self, resp, source) -> list[BrowseResult]:
         try:
             titles = re.findall(
                 r'<span[^>]*class="[^"]*title[^"]*"[^>]*>(.*?)</span>',
@@ -220,11 +220,7 @@ class HTTPBrowser:
             logger.warning(f"Failed to parse xiaohongshu response: {e}")
             return []
 
-    def browse_random(
-        self,
-        interests: Optional[list[str]] = None,
-        max_results: int = 5,
-    ) -> list[BrowseResult]:
+    def browse_random(self, max_results: int = 5) -> list[BrowseResult]:
         sources = list(self.SOURCE_CONFIGS.keys())
         random.shuffle(sources)
         results: list[BrowseResult] = []
